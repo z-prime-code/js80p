@@ -303,6 +303,10 @@ class GUI
 
         PlatformData get_platform_data() const;
 
+        /** The root platform component of the whole legacy GUI (its background),
+         *  so a host editor can reparent / embed it — e.g. under a MATRIX tab. */
+        PlatformWidget get_root_platform_widget();
+
     private:
         class DefaultEventHandler : public EventHandler
         {

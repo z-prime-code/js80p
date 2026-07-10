@@ -1,0 +1,117 @@
+# Build the JUCE JS80P plugin (VST3 + Standalone) on Windows, Linux and macOS
+# with CMake, and attach the packaged artifacts to the GitHub Release that
+# triggered the run.
+#
+# The build mirrors BUILD.md / CMakeLists.txt:
+#   * JUCE 8.0.14 is fetched by CMake on first configure (FetchContent).
+#   * Linux / macOS build with Ninja + the system/Apple compiler.
+#   * Windows builds with the Visual Studio generator's ClangCL toolset
+#     (clang-cl) — MSVC cl.exe and MinGW are rejected by CMakeLists.txt.
+name: Release
+
+on:
+  # Build + upload assets when a GitHub Release is created.
+  release:
+    types: [created]
+  # Allow manual runs to smoke-test the build; these upload the zips as
+  # workflow artifacts only (no release to attach to).
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux
+          # windows-2025 / windows-latest migrated to Visual Studio 2026 in
+          # June 2026; pin to windows-2022 for the VS 2022 + ClangCL toolset
+          # the "Visual Studio 17 2022" generator below needs.
+          - os: windows-2022
+            name: windows
+          - os: macos-15
+            name: macos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Toolchain / dependencies ──────────────────────────────
+      # CMake and Ninja are pre-installed on all GitHub-hosted runners, so we
+      # only need the Linux system libraries JUCE actually links against:
+      #   * libasound2-dev            — ALSA, for the Standalone's audio I/O
+      #   * libfreetype-dev/fontconfig — juce_graphics text rendering
+      #   * libx*-dev                 — juce_gui_basics (X11)
+      # JUCE's optional deps are intentionally omitted: JACK (JUCE_JACK off by
+      # default), curl (JUCE_USE_CURL=0), webkit (JUCE_WEB_BROWSER=0) and
+      # OpenGL/mesa (juce_opengl is not used).
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libasound2-dev libfreetype-dev libfontconfig1-dev \
+            libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
+            libxinerama-dev libxrandr-dev libxrender-dev
+
+      # ── Configure ─────────────────────────────────────────────
+      - name: Configure (Linux)
+        if: runner.os == 'Linux'
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure (macOS)
+        if: runner.os == 'macOS'
+        # Build a universal binary so the release runs on both Apple Silicon
+        # and Intel Macs.
+        run: >
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        # The windows runner ships VS 2022 with the "C++ Clang tools" component,
+        # so the ClangCL toolset gives us clang-cl (the only supported Windows
+        # compiler) via the Visual Studio generator.
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -T ClangCL
+
+      # ── Build ─────────────────────────────────────────────────
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      # ── Package ───────────────────────────────────────────────
+      # Zip the VST3 build into archives per platform.
+      # 7-Zip is pre-installed on every GitHub-hosted runner and, unlike
+      # `cmake -E tar --format=zip` (libarchive's low default deflate level),
+      # lets us max out compression while still emitting a standard .zip:
+      #   -mx=9      maximum compression
+      #   -mfb=258   largest deflate match length
+      #   -mpass=15  most deflate passes
+      - name: Package
+        shell: bash
+        run: |
+          version="${{ github.event.release.tag_name || github.sha }}"
+          pushd build/JS80P_artefacts/Release/VST3
+          zip="$GITHUB_WORKSPACE/JS80P-vibed-VST3-${version}-${{ matrix.name }}.zip"
+          7z a -tzip -mx=9 -mfb=258 -mpass=15 "$zip" JS80P.vst3
+          echo "ASSET=$zip" >> "$GITHUB_ENV"
+
+      # ── Publish ───────────────────────────────────────────────
+      # Always keep the zips as downloadable workflow artifacts...
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: JS80P-${{ matrix.name }}
+          path: ${{ env.ASSET }}
+
+      # ...and, when triggered by a release, attach them to that release.
+      - name: Attach to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ env.ASSET }}

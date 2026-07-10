@@ -3744,6 +3744,12 @@ void GUI::show()
 }
 
 
+GUI::PlatformWidget GUI::get_root_platform_widget()
+{
+    return background->get_platform_widget();
+}
+
+
 void GUI::resize(int const new_width, int const new_height)
 {
     Number new_scale;

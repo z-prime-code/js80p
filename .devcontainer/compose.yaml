@@ -1,0 +1,30 @@
+services:
+  dev:
+    build:
+      context: .
+      args:
+        # Match these to your host UID/GID to avoid mount permission
+        # pain: run `id -u` / `id -g` and set them here (or via .env).
+        USER_UID: "1000"
+        USER_GID: "1000"
+    # Your plugin source, mounted live for fast iteration.
+    volumes:
+      - ../:/workspace:cached
+      # Persist Claude Code auth + config across container rebuilds
+      # so you only log in once.
+      - ~/.devcontainer/${COMPOSE_PROJECT_NAME}/.claude:/home/ubuntu/.claude
+      # Cache CMake FetchContent (JUCE clone) between runs.
+      - ~/.devcontainer/${COMPOSE_PROJECT_NAME}/build_deps:/workspace/build/_deps
+    ports:
+      - "6080:6080"   # noVNC  -> http://localhost:6080/vnc.html
+      - "5900:5900"   # raw VNC (optional; point a native VNC client here)
+    environment:
+      ENABLE_GUI: "1"
+      SCREEN_GEOMETRY: "1600x1000x24"
+    # JUCE/ALSA and gdb like these; harmless if unused.
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    stdin_open: true
+    tty: true

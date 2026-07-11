@@ -109,14 +109,16 @@ NewGui::NewGui(Synth& synth)
     add_header_icon(MiniButton::Icon::SAVE,      [this]() { save_preset(); });
 
     /* Global effect output volume, promoted to a header knob (right of the
-     * tabs). Bare dial with the OUT caption drawn to its left; a macro-
-     * modulation destination like the other effect volumes. */
+     * tabs). A full Control with its OUT caption in the left gutter (so grabbing
+     * the caption drags the value too); a macro-modulation destination like the
+     * other effect volumes. */
     out_knob = std::make_unique<Knob>(
         bridge, Synth::ParamId::EV3V, "OUT", Control::Style::ROTARY, Control::Size::SMALL
     );
     out_knob->set_manager(&manager);
     out_knob->set_mod_caps(Modulation::CAP_LFO | Modulation::CAP_MACRO);   /* EV3V: LFO + macro */
-    out_knob->set_bare(true);
+    out_knob->set_label_placement(Control::LabelPos::LEFT);   /* caption in the gutter, draggable */
+    out_knob->set_value_display(Control::ValueDisplay::NONE);   /* value only via popover */
     out_knob->set_source_placeholder(true);   /* always show an (empty) modulation box */
     out_knob->set_badge_centred(true);   /* modulation box centred on the dial, not top-right */
     addAndMakeVisible(*out_knob);
@@ -796,18 +798,20 @@ void NewGui::resized()
 
     /* Global OUT knob pinned to the header's right edge, its (empty) modulation
      * box padded 8px from the plugin's right side. A small effects-sized dial
-     * with its caption to the left; the box is vertically centred on the dial. */
+     * with its caption in the left gutter; the box is vertically centred on the
+     * dial. The control spans the caption gutter plus the dial so the caption is
+     * part of the knob (and drags the value). */
     {
-        int const out_sz = 34;
+        int const dial_sz = 34;
+        int const label_gutter = 34;   /* matches LEFT_GUTTER in control.cpp */
+        int const out_w = label_gutter + dial_sz;
         int const badge_pad = 8;   /* gap from the plugin's right edge to the mod box */
         /* The centred mod box sits ~15px right of the dial's bounds (dial right
          * edge + 4px gap + 16px box, less the 5px the circle is inset). */
         int const badge_overhang = 15;
-        int const kx = header_bounds.getRight() - badge_pad - badge_overhang - out_sz;
-        int const ky = header_bounds.getCentreY() - out_sz / 2;
-        out_knob->setBounds(kx, ky, out_sz, out_sz);
-        out_label_bounds =
-            juce::Rectangle<int>(kx - 4 - 34, header_bounds.getY(), 34, header_bounds.getHeight());
+        int const kx = header_bounds.getRight() - badge_pad - badge_overhang - out_w;
+        int const ky = header_bounds.getCentreY() - dial_sz / 2;
+        out_knob->setBounds(kx, ky, out_w, dial_sz);
     }
 
     /* SYNTH / EFFECTS / MATRIX tabs, centred in the header row. */
@@ -1070,11 +1074,6 @@ void NewGui::paint(juce::Graphics& g)
     g.setColour(Theme::TEXT);
     g.setFont(juce::Font(juce::FontOptions().withHeight(20.0f).withStyle("Bold")));
     g.drawText("JS80P", header_bounds.reduced(16, 0), juce::Justification::centredLeft, false);
-
-    /* OUT caption to the left of the header output knob. */
-    g.setColour(Theme::TEXT_DIM);
-    g.setFont(juce::Font(juce::FontOptions().withHeight(11.0f).withStyle("Bold")));
-    g.drawText("OUT", out_label_bounds, juce::Justification::centredRight, false);
 
     paint_tabs(g);
 

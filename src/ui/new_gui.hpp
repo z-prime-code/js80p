@@ -140,9 +140,8 @@ class NewGui : public juce::Component, private juce::Timer
         juce::OwnedArray<MiniButton> header_buttons;
         std::unique_ptr<juce::FileChooser> file_chooser;
         /* Global effect output volume (EV3V), a header knob to the right of the
-         * tabs with its OUT caption drawn to the left (no value readout). */
+         * tabs with its OUT caption in the left gutter (no value readout). */
         std::unique_ptr<Knob> out_knob;
-        juce::Rectangle<int> out_label_bounds;
         ModulationManager manager;
         MacroStrip macro_strip;
         EffectsPage effects_page;

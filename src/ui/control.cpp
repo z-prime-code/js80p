@@ -668,24 +668,31 @@ void Control::update_popover()
     );
     popover->set_editing(editing);
 
-    /* Anchor (in this control's coordinates): above the modulator badge while
-     * dragging the amount; otherwise above the title (so it never covers it)
-     * when one shows on top, else above the dial / track. */
+    /* Anchor (in this control's coordinates): the modulator badge while dragging
+     * the amount; otherwise the title (so the bubble never covers it) when one
+     * shows on top, else the dial / track. The bubble sits above this element by
+     * default and below it (arrow flipped up) when there's no room above. */
     float centre_x;
     float top_ref;
+    float bottom_ref;
     if (dragging_depth && badge_shown()) {
         juce::Rectangle<float> const br = badge_rect();
         centre_x = br.getCentreX();
         top_ref = br.getY();
+        bottom_ref = br.getBottom();
     } else {
         juce::Rectangle<float> const el = is_slider() ? track_rect() : knob_circle();
         centre_x = el.getCentreX();
         top_ref = label_pos == LabelPos::TOP ? (float)label_strip().getY() : el.getY();
+        bottom_ref = el.getBottom();
     }
 
-    /* Convert the anchor into top-level coordinates and place the bubble there. */
+    /* Convert the anchor's top and bottom edges into top-level coordinates. */
     juce::Point<int> const anchor = top->getLocalPoint(
         this, juce::Point<int>(juce::roundToInt(centre_x), juce::roundToInt(top_ref))
+    );
+    juce::Point<int> const anchor_bottom = top->getLocalPoint(
+        this, juce::Point<int>(juce::roundToInt(centre_x), juce::roundToInt(bottom_ref))
     );
 
     juce::Rectangle<int> box = popover->measure();
@@ -695,11 +702,16 @@ void Control::update_popover()
     int const w = box.getWidth();
     int const h = box.getHeight();
     int px = juce::jlimit(0, juce::jmax(0, top->getWidth() - w), anchor.x - w / 2);
-    int py = juce::jmax(0, anchor.y - 2 - h);
+
+    /* Flip below the control when the bubble would run off the top of the host
+     * (e.g. the header OUT knob), so it never covers the knob it describes. */
+    bool const flip = (anchor.y - 2 - h) < 0;
+    int py = flip ? (anchor_bottom.y + 2) : (anchor.y - 2 - h);
 
     if (popover->getParentComponent() != top) {
         top->addChildComponent(popover.get());
     }
+    popover->set_arrow_up(flip);
     popover->set_arrow_x((float)(anchor.x - px));
     popover->setBounds(px, py, w, h);
     popover->toFront(false);

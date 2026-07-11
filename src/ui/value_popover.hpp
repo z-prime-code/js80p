@@ -63,6 +63,11 @@ class ValuePopover : public juce::Component
 
         void set_arrow_x(float const x) { arrow_x_ = x; }
 
+        /** Point the arrow up (bubble sitting *below* its anchor) instead of the
+         *  default down (bubble above). Used when there is no room above — e.g.
+         *  the header OUT knob, whose bubble would otherwise clip off the top. */
+        void set_arrow_up(bool const on) { arrow_up_ = on; }
+
         static juce::Font value_font() { return juce::Font(juce::FontOptions().withHeight(11.0f).withStyle("Bold")); }
         static juce::Font title_font() { return juce::Font(juce::FontOptions().withHeight(11.0f)); }
 
@@ -91,7 +96,11 @@ class ValuePopover : public juce::Component
         juce::Rectangle<int> value_area() const
         {
             juce::Rectangle<float> body = getLocalBounds().toFloat().reduced(0.5f);
-            body.removeFromBottom(ARROW_H);
+            if (arrow_up_) {
+                body.removeFromTop(ARROW_H);
+            } else {
+                body.removeFromBottom(ARROW_H);
+            }
             body = body.reduced(3.0f, 2.0f);
             if (has_title()) {
                 body.removeFromTop(LINE_H);
@@ -176,15 +185,23 @@ class ValuePopover : public juce::Component
             juce::Point<int> const a = top->getLocalPoint(
                 &owner, juce::Point<int>(anchor.getCentreX(), anchor.getY())
             );
+            juce::Point<int> const a_bottom = top->getLocalPoint(
+                &owner, juce::Point<int>(anchor.getCentreX(), anchor.getBottom())
+            );
             juce::Rectangle<int> const box = slot->measure();
             int const w = box.getWidth();
             int const h = box.getHeight();
             int const px = juce::jlimit(0, juce::jmax(0, top->getWidth() - w), a.x - w / 2);
-            int const py = juce::jmax(0, a.y - 2 - h);
+
+            /* Sit above the anchor by default; flip below (arrow pointing up) when
+             * the bubble would run off the top of the host. */
+            bool const flip = (a.y - 2 - h) < 0;
+            int const py = flip ? (a_bottom.y + 2) : (a.y - 2 - h);
 
             if (slot->getParentComponent() != top) {
                 top->addChildComponent(slot.get());
             }
+            slot->set_arrow_up(flip);
             slot->set_arrow_x((float)(a.x - px));
             slot->setBounds(px, py, w, h);
             slot->toFront(false);
@@ -202,19 +219,29 @@ class ValuePopover : public juce::Component
         void paint(juce::Graphics& g) override
         {
             juce::Rectangle<float> bubble = getLocalBounds().toFloat().reduced(0.5f);
-            bubble.removeFromBottom(ARROW_H);
+            if (arrow_up_) {
+                bubble.removeFromTop(ARROW_H);
+            } else {
+                bubble.removeFromBottom(ARROW_H);
+            }
 
             g.setColour(Theme::PANEL_2.withAlpha(0.96f));
             g.fillRoundedRectangle(bubble, 3.0f);
             g.setColour(accent_);
             g.drawRoundedRectangle(bubble, 3.0f, 1.0f);
 
-            /* Downward pointer toward the anchor. */
+            /* Pointer toward the anchor: down (bubble above) or up (bubble below). */
             juce::Path arrow;
             float const ax = juce::jlimit(bubble.getX() + 4.0f, bubble.getRight() - 4.0f, arrow_x_);
-            arrow.addTriangle(ax - 3.0f, bubble.getBottom() - 0.5f,
-                              ax + 3.0f, bubble.getBottom() - 0.5f,
-                              ax, bubble.getBottom() + ARROW_H);
+            if (arrow_up_) {
+                arrow.addTriangle(ax - 3.0f, bubble.getY() + 0.5f,
+                                  ax + 3.0f, bubble.getY() + 0.5f,
+                                  ax, bubble.getY() - ARROW_H);
+            } else {
+                arrow.addTriangle(ax - 3.0f, bubble.getBottom() - 0.5f,
+                                  ax + 3.0f, bubble.getBottom() - 0.5f,
+                                  ax, bubble.getBottom() + ARROW_H);
+            }
             g.fillPath(arrow);
 
             juce::Rectangle<float> text = bubble.reduced(4.0f, 2.0f);
@@ -237,6 +264,7 @@ class ValuePopover : public juce::Component
         juce::String value_;
         juce::Colour accent_ { juce::Colours::white };
         float arrow_x_ { 0.0f };
+        bool arrow_up_ { false };
         bool editing_ { false };
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ValuePopover)

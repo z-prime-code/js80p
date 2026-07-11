@@ -94,8 +94,7 @@ Output:
 3. Configure and build (run from the repository root):
 
    ```bat
-   cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
-     -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+   cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
    cmake --build build
    ```
 
@@ -251,6 +250,46 @@ Known gaps (not identity, but not yet at parity with the legacy VST3):
   JUCE's own program mechanism, so these remain cosmetic/host-convenience gaps rather
   than automation-reconnection gaps. (`IMidiMapping` itself is now implemented — see
   above.)
+
+---
+
+## Debug builds & leak detection (JUCE_LEAK_DETECTOR)
+
+Every JUCE class (and anything using `JUCE_LEAK_DETECTOR` / `JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR`, which includes all of the GUI's `juce::Component`s) keeps a per-class instance counter. When the last static destructor runs at shutdown, any class with a non-zero count triggers an assertion:
+
+```
+*** Leaked objects detected: N instance(s) of class Foo ***
+```
+
+This is the cheapest first pass for leaks in the new GUI — it needs no external tooling, only a **Debug build**. The counter is compiled in whenever `JUCE_CHECK_MEMORY_LEAKS` is set, which JUCE defaults to `1` in debug builds; a `Release` build compiles it out entirely, so you must build `Debug`. Use a separate build directory so it doesn't clobber your Release artefacts.
+
+**Linux / macOS:**
+
+```bash
+cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build-debug
+# run the Standalone; the assert fires on exit and aborts under a debugger
+build-debug/JS80P_artefacts/Debug/Standalone/JS80P     # Linux
+# build-debug/JS80P_artefacts/Debug/Standalone/JS80P.app/Contents/MacOS/JS80P   # macOS
+```
+
+Run it under `gdb`/`lldb` (`gdb --args …`, then `run`) so the leak assertion breaks with a backtrace pinpointing the leaked class rather than just aborting. On Linux the Standalone can be exercised headlessly under `Xvfb :99` (`DISPLAY=:99 …`); open and close the editor / switch pages so GUI components are created and destroyed before shutdown.
+
+**Windows (Visual Studio Community):**
+
+```bat
+:: from "x64 Native Tools Command Prompt for VS 2022"
+cmake -B build-debug -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl
+cmake --build build-debug
+```
+
+Launch `build-debug\JS80P_artefacts\Debug\Standalone\JS80P.exe` **under the VS debugger** (open the folder / exe in VS, or attach) so the assertion surfaces in the Output window with the leaked class name; running it standalone just pops the abort dialog. To catch leaks inside a *hosted* VST3, build the VST3 in Debug, load it in your DAW, and attach the VS debugger to the DAW process — the assert fires when the DAW unloads the plugin.
+
+**Scope & caveats:**
+
+- It only reports classes that carry the leak-detector macro (all `juce::` types and GUI components) — **not** raw `new`/`malloc`, `std::` containers, or DSP allocations. For those, and for per-frame allocation churn, use the allocation profilers below.
+- It reports *that* a class leaked and *how many*, not the allocation stack. Pair it with ASan (Linux) or the VS Memory Usage snapshot diff (Windows) to find the offending site.
+- A leak is only reported if the process shuts down cleanly; a crash or `_exit` skips the static destructors and the check.
 
 ---
 

@@ -19,7 +19,9 @@
 #ifndef JS80P__PLUGIN__JUCE__PLUGIN_EDITOR_HPP
 #define JS80P__PLUGIN__JUCE__PLUGIN_EDITOR_HPP
 
+#include <algorithm>
 #include <memory>
+#include <vector>
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_gui_basics/juce_gui_basics.h>
@@ -56,6 +58,35 @@ class JS80PEditor : public juce::AudioProcessorEditor,
         ) override;
 
     private:
+        /* Base (1.0x) resolution the new GUI is laid out at; it's drawn through a
+         * uniform scale transform, so resizing the aspect-locked window zooms
+         * rather than reflows. 0.527 matches the previous default window size. */
+        static int base_width()  { return (int)(0.527 * (double)JS80P::GUI::WIDTH); }
+        static int base_height() { return (int)(0.527 * (double)(JS80P::GUI::HEIGHT - 53)); }
+
+        /* Window size last chosen by the user this session, shared across all
+         * instances; editors opened afterwards start here. Not persisted; 0 means
+         * unset (fall back to the 1.0x default). Message-thread only. */
+        static int shared_width;
+        static int shared_height;
+
+        /* Every live editor, visible or not (some hosts keep editors built but
+         * hidden after close, ready to re-show). Lets sync_all_to_shared() push a
+         * rescale onto all of them. Message-thread only, so no locking. */
+        static std::vector<JS80PEditor*> instances;
+
+        /* Re-entrancy guard while sync_all_to_shared() resizes the others (each
+         * setSize() re-enters resized()). */
+        static bool syncing;
+
+        /* Resize every other live editor to the shared size; hidden ones get
+         * corrected in place so they show right when next revealed. */
+        static void sync_all_to_shared(JS80PEditor const* const source);
+
+        /* A host restoring a saved editor forces its stale size onto us before the
+         * window has painted; resized() tells that from a user resize by first
+         * paint. See new_gui->has_painted. */
+
         /* Show / hide + size the embedded legacy GUI when the MATRIX tab of the
          * new GUI is entered / left. */
         void set_matrix(bool const active);

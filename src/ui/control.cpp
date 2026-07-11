@@ -632,10 +632,11 @@ bool Control::popover_shown() const
 
 void Control::update_popover()
 {
-    /* The popover lives on the top-level component, not the immediate parent, so
-     * it can float above a control's title even when that control sits in a thin
-     * strip / header row that would otherwise clip it. */
-    juce::Component* const top = getTopLevelComponent();
+    /* The popover lives on the GUI root (the transformed top child, see
+     * ValuePopover::host_for), not the immediate parent, so it can float above a
+     * control's title even when that control sits in a thin strip / header row
+     * that would otherwise clip it — while still inheriting the UI scale. */
+    juce::Component* const top = ValuePopover::host_for(*this);
     bool const show = popover_shown() && top != nullptr && top != this && isVisible();
 
     if (!show) {

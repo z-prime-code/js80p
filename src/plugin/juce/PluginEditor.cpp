@@ -22,6 +22,12 @@
 namespace JS80P
 {
 
+/* Session-only user scale, shared across instances. See header. */
+int JS80PEditor::shared_width = 0;
+int JS80PEditor::shared_height = 0;
+std::vector<JS80PEditor*> JS80PEditor::instances;
+bool JS80PEditor::syncing = false;
+
 JS80PEditor::JS80PEditor(JS80PProcessor& processor)
     : juce::AudioProcessorEditor(&processor),
     processor(processor),
@@ -33,30 +39,27 @@ JS80PEditor::JS80PEditor(JS80PProcessor& processor)
 
     juce::ComponentBoundsConstrainer* const constrainer = getConstrainer();
 
-    /* The new GUI no longer reserves a blank value strip under each knob, so its
-     * content is shorter than the legacy WIDTH:HEIGHT ratio. Lock the window to a
-     * design height trimmed by 53 px (~28 px at the default scale below) so the
-     * plugin is that much shorter at the same width. */
-    int const design_width = JS80P::GUI::WIDTH;
-    int const design_height = JS80P::GUI::HEIGHT - 53;
+    /* The new GUI is laid out once at a fixed base resolution and drawn through a
+     * uniform scale transform in resized(); the window is aspect-locked to that
+     * ratio, so resizing zooms the whole UI instead of reflowing it. */
+    int const bw = base_width();
+    int const bh = base_height();
 
     if (constrainer != nullptr) {
-        constrainer->setFixedAspectRatio(
-            (double)design_width / (double)design_height
-        );
-        constrainer->setSizeLimits(
-            design_width / 4,
-            design_height / 4,
-            design_width,
-            design_height
-        );
+        constrainer->setFixedAspectRatio((double)bw / (double)bh);
+        /* 0.5x .. 2.0x scale range; the default below is 1.0x. */
+        constrainer->setSizeLimits(bw / 2, bh / 2, bw * 2, bh * 2);
     }
 
-    /* Larger default than the legacy INIT_SCALE (0.48) so the new GUI's
-     * per-oscillator pulse-width / harmonics section is visible without
-     * resizing. The scale (0.527) keeps the same width as before; the trimmed
-     * design height above makes the window ~28px shorter. */
-    setSize((int)(0.527 * (double)design_width), (int)(0.527 * (double)design_height));
+    /* Start at the size last chosen this session (shared across instances), or the
+     * 1.0x default if unset. JUCE clamps it to the constraints above. */
+    if (shared_width > 0 && shared_height > 0) {
+        setSize(shared_width, shared_height);
+    } else {
+        setSize(bw, bh);
+    }
+
+    instances.push_back(this);
 
     /* Original GUI (JUCE Widget backend). Its root is reparented into matrix_host
      * so the new GUI can embed it, contained, under its MATRIX tab. */
@@ -93,10 +96,39 @@ JS80PEditor::~JS80PEditor()
 {
     stopTimer();
 
+    instances.erase(
+        std::remove(instances.begin(), instances.end(), this), instances.end()
+    );
+
     new_gui = nullptr;
 
     delete gui;
     gui = nullptr;
+}
+
+
+void JS80PEditor::sync_all_to_shared(JS80PEditor const* const source)
+{
+    if (syncing || shared_width <= 0 || shared_height <= 0) {
+        return;
+    }
+
+    syncing = true;
+
+    for (JS80PEditor* const editor : instances) {
+        if (editor == source) {
+            continue;
+        }
+
+        bool const needs_resize =
+            editor->getWidth() != shared_width || editor->getHeight() != shared_height;
+
+        if (needs_resize) {
+            editor->setSize(shared_width, shared_height);
+        }
+    }
+
+    syncing = false;
 }
 
 
@@ -119,10 +151,12 @@ void JS80PEditor::layout_matrix()
         return;
     }
 
-    /* The body area sits below the new GUI's header (46 px). Scale the legacy GUI
-     * to fit within it, aspect-locked (contain), then centre it — the surrounding
-     * area is left empty. */
-    int const header_h = 46;
+    /* The body sits below the header, which is 46 px at base resolution but drawn
+     * scaled (see resized()); matrix_host is an untransformed sibling, so clear
+     * the scaled header height. Fit the legacy GUI within the body, aspect-locked,
+     * then centre it. */
+    double const scale = (double)getWidth() / (double)base_width();
+    int const header_h = juce::roundToInt(46.0 * scale);
     juce::Rectangle<int> const body(
         0, header_h, getWidth(), juce::jmax(0, getHeight() - header_h)
     );
@@ -139,8 +173,30 @@ void JS80PEditor::layout_matrix()
 
 void JS80PEditor::resized()
 {
+    if (new_gui == nullptr || !new_gui->has_painted) {
+        /* Before first paint, a size differing from the shared scale is the host
+         * restoring its stale saved size — override it back, don't record it. */
+        if (shared_width > 0
+                && (getWidth() != shared_width || getHeight() != shared_height)) {
+            setSize(shared_width, shared_height);
+            return;   /* setSize re-enters resized(); layout runs there. */
+        }
+    }
+    else if (!syncing && getWidth() > 0 && getHeight() > 0) {
+        /* After first paint, any resize is a user rescale (aspect-locked): record
+         * it and push it onto the other live editors, hidden ones included, so
+         * they show at this size when revealed. Skipped while we drive them. */
+        shared_width = getWidth();
+        shared_height = getHeight();
+        sync_all_to_shared(this);
+    }
+
     if (new_gui != nullptr) {
-        new_gui->setBounds(getLocalBounds());
+        /* Lay the new GUI out at the base resolution and scale it as a unit. */
+        double const scale = (double)getWidth() / (double)base_width();
+
+        new_gui->setBounds(0, 0, base_width(), base_height());
+        new_gui->setTransform(juce::AffineTransform::scale((float)scale));
     }
 
     if (matrix_active) {

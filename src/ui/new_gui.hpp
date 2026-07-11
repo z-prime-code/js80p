@@ -67,6 +67,10 @@ class NewGui : public juce::Component, private juce::Timer
          *  legacy GUI in the body area. */
         std::function<void(bool)> on_matrix;
 
+        /** Set true on the first paint(). The host editor reads it to tell the
+         *  host's initial size-restore (before paint) from a user resize (after). */
+        bool has_painted = false;
+
         void paint(juce::Graphics& g) override;
         void resized() override;
         void mouseUp(juce::MouseEvent const& event) override;

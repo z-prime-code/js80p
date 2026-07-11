@@ -100,9 +100,59 @@ class ValuePopover : public juce::Component
         }
 
         /**
+         * \brief The component a popover for `owner` should be parented to: the
+         *        (transformed) new-GUI root, so the popover inherits the same
+         *        scale AffineTransform as the controls and renders at the right
+         *        size when the UI is zoomed. The GUI root spans the whole surface,
+         *        so the popover is never clipped by a thin strip or header row
+         *        (the reason it isn't just a child of the control).
+         *
+         * The new GUI is laid out at a fixed base resolution and drawn through a
+         * uniform scale transform on its root (see PluginEditor::resized()). That
+         * root is the *only* component in the chain that carries a transform, so
+         * it is the outermost ancestor of `owner` with a non-identity transform.
+         * Keying on the transform (rather than "the outermost child of the
+         * top-level") is what makes this correct in a plain host window too: when
+         * the plugin runs standalone the editor sits *between* the GUI root and
+         * the top-level window, so the naive walk would stop at the untransformed
+         * editor and the popover would be positioned right but drawn at base size.
+         *
+         * At 1.0x the transform is the identity (nothing to inherit); there we
+         * fall back to the outermost child of the top-level, a full-surface,
+         * base-coordinate root that keeps the popover unclipped and correctly
+         * sized.
+         */
+        static juce::Component* host_for(juce::Component& owner)
+        {
+            juce::Component* const top = owner.getTopLevelComponent();
+            if (top == nullptr) {
+                return nullptr;
+            }
+
+            juce::Component* scaled = nullptr;
+            for (juce::Component* c = &owner; c != nullptr && c != top;
+                    c = c->getParentComponent()) {
+                if (!c->getTransform().isIdentity()) {
+                    scaled = c;
+                }
+            }
+            if (scaled != nullptr) {
+                return scaled;
+            }
+
+            juce::Component* host = &owner;
+            while (host->getParentComponent() != nullptr
+                    && host->getParentComponent() != top) {
+                host = host->getParentComponent();
+            }
+            return host;
+        }
+
+        /**
          * \brief Place `slot`'s popover above `anchor` (given in `owner`'s
-         *        coordinates), hosted on the top-level component so it is never
-         *        clipped. Creates the popover on first use.
+         *        coordinates), hosted on the GUI root (see host_for) so it is
+         *        never clipped and scales with the UI. Creates the popover on
+         *        first use.
          */
         static void show(
                 std::unique_ptr<ValuePopover>& slot,
@@ -112,7 +162,7 @@ class ValuePopover : public juce::Component
                 juce::String value,
                 juce::Colour accent
         ) {
-            juce::Component* const top = owner.getTopLevelComponent();
+            juce::Component* const top = host_for(owner);
             if (top == nullptr || top == &owner) {
                 return;
             }

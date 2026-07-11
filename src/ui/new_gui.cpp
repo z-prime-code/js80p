@@ -1058,6 +1058,8 @@ void NewGui::paint_tabs(juce::Graphics& g)
 
 void NewGui::paint(juce::Graphics& g)
 {
+    has_painted = true;
+
     g.fillAll(Theme::BG);
 
     g.setColour(Theme::PANEL_2);

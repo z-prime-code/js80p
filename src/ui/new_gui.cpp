@@ -522,11 +522,19 @@ void NewGui::open_preset()
         "Import patch", juce::File(), "*.js80p"
     );
 
-    NewGui* const self = this;
+    /* The dialog is asynchronous: the editor (and this NewGui) can be destroyed
+     * while it is still open — e.g. the host closes the window or quits. Capture
+     * a SafePointer so the completion callback becomes a no-op instead of
+     * dereferencing a freed NewGui. */
+    juce::Component::SafePointer<NewGui> const self(this);
 
     file_chooser->launchAsync(
         juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
         [self](juce::FileChooser const& fc) {
+            if (self == nullptr) {
+                return;
+            }
+
             juce::File const file = fc.getResult();
 
             if (file == juce::File()) {
@@ -558,13 +566,19 @@ void NewGui::save_preset()
         "Export patch", juce::File(), "*.js80p"
     );
 
-    NewGui* const self = this;
+    /* See open_preset(): guard the async callback against this NewGui being
+     * destroyed while the dialog is still open. */
+    juce::Component::SafePointer<NewGui> const self(this);
 
     file_chooser->launchAsync(
         juce::FileBrowserComponent::saveMode
             | juce::FileBrowserComponent::canSelectFiles
             | juce::FileBrowserComponent::warnAboutOverwriting,
         [self](juce::FileChooser const& fc) {
+            if (self == nullptr) {
+                return;
+            }
+
             juce::File file = fc.getResult();
 
             if (file == juce::File()) {

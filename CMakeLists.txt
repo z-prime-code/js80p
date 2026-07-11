@@ -54,6 +54,7 @@ target_sources(JS80P PRIVATE
   src/ui/modulation_manager.cpp
   src/ui/control.cpp
   src/ui/harmonic_slider.cpp
+  src/ui/glyph_sheet.cpp
   src/ui/mini_button.cpp
   src/ui/waveform_selector.cpp
   src/ui/filter_type_selector.cpp

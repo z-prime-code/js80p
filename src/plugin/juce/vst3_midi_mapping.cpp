@@ -34,6 +34,8 @@
 
 #if JucePlugin_Build_VST3
 
+#include <atomic>
+
 #include <pluginterfaces/base/funknown.h>
 #include <pluginterfaces/vst/ivsteditcontroller.h>
 #include <pluginterfaces/vst/ivstmidicontrollers.h>
@@ -62,9 +64,19 @@ constexpr int MIDI_CHANNELS = 16;
  *        a (channel, CC / pitch-bend / channel-pressure) triple maps to the
  *        parameter whose ParamID is \c (channel<<8)|controller .
  *
- * The plugin owns exactly one instance for its lifetime, so the FUnknown
- * reference count is a no-op: the object is never heap-managed by the host and
- * must never delete itself.
+ * Each instance is a self-owned, heap-allocated COM object with an honest
+ * reference count: it is created (with a count of 1) each time the host queries
+ * \c IMidiMapping and deletes itself when the host drops its last reference.
+ * This is deliberately NOT tied to the plugin's lifetime — a host (e.g. REAPER)
+ * can cache the interface pointer and only release it while clearing its VST3
+ * data at shutdown, which happens AFTER the JUCE wrapper has already destroyed
+ * the AudioProcessor (and hence anything the processor owned). An object whose
+ * storage died with the processor would dangle there; because this one carries
+ * its own copy of the controller table and frees itself on the final release,
+ * it stays valid for exactly as long as the host holds it. (JUCE's own
+ * controller also implements IMidiMapping with correct ref-counting; we
+ * intentionally shadow it to hand out the legacy ParamID mapping instead —
+ * "user-provided interfaces win in the wrapper", see the header.)
  */
 class MidiMapping : public Vst::IMidiMapping
 {
@@ -72,7 +84,8 @@ class MidiMapping : public Vst::IMidiMapping
         explicit MidiMapping(
                 std::array<bool, MIDI_CTL_COUNT> const& supported_controllers
         )
-            : supported_controllers(supported_controllers)
+            : supported_controllers(supported_controllers),
+            reference_count(1)
         {
         }
 
@@ -124,19 +137,25 @@ class MidiMapping : public Vst::IMidiMapping
             return kNoInterface;
         }
 
-        /* Owned by the processor; reference counting is intentionally inert. */
         uint32 PLUGIN_API addRef() override
         {
-            return 1000;
+            return (uint32)(reference_count.fetch_add(1) + 1);
         }
 
         uint32 PLUGIN_API release() override
         {
-            return 1000;
+            int32 const remaining = reference_count.fetch_sub(1) - 1;
+
+            if (remaining == 0) {
+                delete this;
+            }
+
+            return (uint32)remaining;
         }
 
     private:
         std::array<bool, MIDI_CTL_COUNT> const supported_controllers;
+        std::atomic<int32> reference_count;
 };
 
 
@@ -146,7 +165,7 @@ class MidiMappingExtensions : public juce::VST3ClientExtensions
         explicit MidiMappingExtensions(
                 std::array<bool, MIDI_CTL_COUNT> const& supported_controllers
         )
-            : midi_mapping(supported_controllers)
+            : supported_controllers(supported_controllers)
         {
         }
 
@@ -154,11 +173,33 @@ class MidiMappingExtensions : public juce::VST3ClientExtensions
                 Steinberg::TUID const iid,
                 void** const obj
         ) override {
-            return (int32_t)midi_mapping.queryInterface(iid, obj);
+            /*
+             * Hand the host a fresh, self-owned MidiMapping (reference count 1)
+             * rather than one embedded in this extension: JUCE passes the
+             * returned pointer straight to the host without adding a reference
+             * of its own, and the host may release it long after this extension
+             * (owned by the AudioProcessor) is gone. The new object frees itself
+             * on the host's final release() and never outlives its usefulness.
+             * On a non-match nothing is allocated.
+             */
+            if (
+                    FUnknownPrivate::iidEqual(iid, Vst::IMidiMapping_iid)
+                    || FUnknownPrivate::iidEqual(iid, FUnknown_iid)
+            ) {
+                *obj = static_cast<Vst::IMidiMapping*>(
+                    new MidiMapping(supported_controllers)
+                );
+
+                return (int32_t)kResultTrue;
+            }
+
+            *obj = nullptr;
+
+            return (int32_t)kNoInterface;
         }
 
     private:
-        MidiMapping midi_mapping;
+        std::array<bool, MIDI_CTL_COUNT> const supported_controllers;
 };
 
 }

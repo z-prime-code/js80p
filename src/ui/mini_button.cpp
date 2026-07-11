@@ -20,9 +20,8 @@
 
 #include "ui/mini_button.hpp"
 
+#include "ui/glyph_sheet.hpp"
 #include "ui/theme.hpp"
-
-#include "BinaryData.h"
 
 
 namespace JS80P
@@ -36,40 +35,6 @@ namespace {
  * of the glyph so the whole button is a large click target. */
 constexpr int ICON_GLYPH_H = 18;   /* enlarged for readability (nearest even) */
 constexpr int ICON_H_PAD = 6;
-
-
-/* Crop a sub-rectangle of the embedded synth.png sprite and turn it into a white
- * icon whose alpha channel is the sprite's luminance, so it can be tinted to any
- * colour (the sprite's glyphs are light line-art on a near-black background). */
-juce::Image extract_glyph(int const x, int const y, int const w, int const h)
-{
-    static juce::Image const sheet = juce::ImageFileFormat::loadFrom(
-        (void const*)BinaryData::synth_png, (size_t)BinaryData::synth_pngSize
-    );
-
-    if (!sheet.isValid()) {
-        return juce::Image();
-    }
-
-    juce::Image glyph(juce::Image::ARGB, w, h, true);
-
-    for (int j = 0; j != h; ++j) {
-        for (int i = 0; i != w; ++i) {
-            juce::Colour const src = sheet.getPixelAt(x + i, y + j);
-            float const lum = (
-                0.299f * src.getFloatRed()
-                + 0.587f * src.getFloatGreen()
-                + 0.114f * src.getFloatBlue()
-            );
-            /* Lift the near-black floor and clip at the glyph's peak brightness so
-             * the background goes fully transparent and the strokes fully opaque. */
-            float const a = juce::jlimit(0.0f, 1.0f, (lum - 0.05f) / 0.60f);
-            glyph.setPixelAt(i, j, juce::Colours::white.withAlpha(a));
-        }
-    }
-
-    return glyph;
-}
 
 }
 
@@ -116,13 +81,19 @@ MiniButton::MiniButton(juce::Image icon, std::function<void()> on_click)
 
 juce::Image MiniButton::preset_icon(Icon const which)
 {
+    /* The decoded sprite + extracted glyphs are cached in a process-wide
+     * GlyphSheet that JS80PProcessor pins alive (SharedResourcePointer), so this
+     * only decodes on the first GUI open; later opens hit the cache. See
+     * GlyphSheet for why this must not be a plain function-local static. */
+    juce::SharedResourcePointer<GlyphSheet> sheet;
+
     /* Bounding boxes (in synth.png pixels) of the folder / dice / download glyphs
      * that sit at the top-left of the legacy Synth panel, with a 1px margin so the
      * antialiased edges are not clipped when the icon is scaled down. */
     switch (which) {
-        case Icon::OPEN:      return extract_glyph(19, 72, 61-19, 111-72);
-        case Icon::RANDOMIZE: return extract_glyph(64, 72, 108-64, 114-72);
-        case Icon::SAVE:      return extract_glyph(114, 72, 150-114, 111-72);
+        case Icon::OPEN:      return sheet->glyph(19, 72, 61-19, 111-72);
+        case Icon::RANDOMIZE: return sheet->glyph(64, 72, 108-64, 114-72);
+        case Icon::SAVE:      return sheet->glyph(114, 72, 150-114, 111-72);
         default:              return juce::Image();
     }
 }

@@ -575,10 +575,21 @@ void ImportPatchButton::click()
 
     ImportPatchButton* const self = this;
 
+    /* The dialog is asynchronous and can outlive this button: the host may
+     * close the editor (or quit) while it is open, destroying the whole legacy
+     * GUI. Widget::~Widget deletes the inner juce::Component, so a SafePointer
+     * to it is a liveness token — if it is gone, skip touching the freed button
+     * (and its dangling tab_body). */
+    juce::Component::SafePointer<juce::Component> const alive(component);
+
     chooser->launchAsync(
         juce::FileBrowserComponent::openMode
             | juce::FileBrowserComponent::canSelectFiles,
-        [self, chooser](juce::FileChooser const& fc) {
+        [self, alive, chooser](juce::FileChooser const& fc) {
+            if (alive == nullptr) {
+                return;
+            }
+
             juce::File const file = fc.getResult();
 
             if (file == juce::File()) {
@@ -617,11 +628,19 @@ void ExportPatchButton::click()
 
     ExportPatchButton* const self = this;
 
+    /* See ImportPatchButton::click(): guard the async callback against this
+     * button being destroyed while the dialog is still open. */
+    juce::Component::SafePointer<juce::Component> const alive(component);
+
     chooser->launchAsync(
         juce::FileBrowserComponent::saveMode
             | juce::FileBrowserComponent::canSelectFiles
             | juce::FileBrowserComponent::warnAboutOverwriting,
-        [self, chooser](juce::FileChooser const& fc) {
+        [self, alive, chooser](juce::FileChooser const& fc) {
+            if (alive == nullptr) {
+                return;
+            }
+
             juce::File file = fc.getResult();
 
             if (file == juce::File()) {

@@ -1,5 +1,5 @@
 build/
-build-juce/
+build-*/
 dist/
 doc/api
 .idea/

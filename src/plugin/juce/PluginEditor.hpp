@@ -72,8 +72,11 @@ class JS80PEditor : public juce::AudioProcessorEditor,
 
         /* Every live editor, visible or not (some hosts keep editors built but
          * hidden after close, ready to re-show). Lets sync_all_to_shared() push a
-         * rescale onto all of them. Message-thread only, so no locking. */
-        static std::vector<JS80PEditor*> instances;
+         * rescale onto all of them. Expected to be touched on the message thread
+         * only, but kept in a thread-safe list (register/unregister/iterate are
+         * guarded by its built-in CriticalSection) so a stray access from another
+         * thread can't corrupt it. */
+        static juce::Array<JS80PEditor*, juce::CriticalSection> instances;
 
         /* Re-entrancy guard while sync_all_to_shared() resizes the others (each
          * setSize() re-enters resized()). */

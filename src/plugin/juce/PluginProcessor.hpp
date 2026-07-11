@@ -35,6 +35,8 @@
 #include "plugin/juce/midi_ctl_parameter.hpp"
 #include "plugin/juce/vst3_midi_mapping.hpp"
 
+#include "ui/glyph_sheet.hpp"
+
 
 namespace JS80P
 {
@@ -150,6 +152,17 @@ class JS80PProcessor : public juce::AudioProcessor
 
         /* Owns the IMidiMapping we hand the VST3 host for its whole lifetime. */
         std::unique_ptr<juce::VST3ClientExtensions> vst3_extensions;
+
+        /*
+         * Pins the shared preset-icon sprite cache (see MiniButton::preset_icon)
+         * alive for this plugin instance's whole lifetime, so opening/closing/
+         * reopening the editor decodes synth.png once rather than every time. The
+         * cache is a SharedResourcePointer singleton shared across all instances,
+         * released when the last instance is destroyed -- i.e. while JUCE's
+         * graphics runtime is still alive, not at DLL-unload/atexit (which hangs
+         * the host when releasing the Direct2D/D3D11-backed images).
+         */
+        juce::SharedResourcePointer<GlyphSheet> glyph_sheet;
 
         JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(JS80PProcessor)
 };

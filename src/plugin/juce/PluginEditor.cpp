@@ -25,7 +25,7 @@ namespace JS80P
 /* Session-only user scale, shared across instances. See header. */
 int JS80PEditor::shared_width = 0;
 int JS80PEditor::shared_height = 0;
-std::vector<JS80PEditor*> JS80PEditor::instances;
+juce::Array<JS80PEditor*, juce::CriticalSection> JS80PEditor::instances;
 bool JS80PEditor::syncing = false;
 
 JS80PEditor::JS80PEditor(JS80PProcessor& processor)
@@ -59,7 +59,7 @@ JS80PEditor::JS80PEditor(JS80PProcessor& processor)
         setSize(bw, bh);
     }
 
-    instances.push_back(this);
+    instances.add(this);
 
     /* Original GUI (JUCE Widget backend). Its root is reparented into matrix_host
      * so the new GUI can embed it, contained, under its MATRIX tab. */
@@ -96,9 +96,7 @@ JS80PEditor::~JS80PEditor()
 {
     stopTimer();
 
-    instances.erase(
-        std::remove(instances.begin(), instances.end(), this), instances.end()
-    );
+    instances.removeAllInstancesOf(this);
 
     new_gui = nullptr;
 
@@ -114,6 +112,12 @@ void JS80PEditor::sync_all_to_shared(JS80PEditor const* const source)
     }
 
     syncing = true;
+
+    /* Hold the list's lock for the whole sweep so registration/removal from
+     * another thread can't invalidate iteration mid-loop. */
+    juce::Array<JS80PEditor*, juce::CriticalSection>::ScopedLockType const lock(
+        instances.getLock()
+    );
 
     for (JS80PEditor* const editor : instances) {
         if (editor == source) {

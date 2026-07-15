@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <string>
 
 #include "plugin/juce/PluginProcessor.hpp"
@@ -38,7 +39,20 @@ JS80PProcessor::~JS80PProcessor()
 
 void JS80PProcessor::prepareToPlay(double sampleRate, int /* samplesPerBlock */)
 {
+    /*
+     * JUCE folds the legacy VST3's setupProcessing (sample-rate config) and
+     * setActive(true) (activation) into this one callback, so we must do both:
+     * configure the sample rate AND resume the synth. releaseResources() calls
+     * synth.suspend(), which runs stop_lfos(); without the matching resume()
+     * here the LFOs stay stopped after the host deactivates and reactivates the
+     * plugin (e.g. around an offline render), so LFO-driven effects like the
+     * chorus lose their modulation and stereo movement until reload. The legacy
+     * wrappers paired resume()/suspend() on every activation/deactivation (see
+     * src/plugin/vst3/plugin.cpp reset_for_state_change and
+     * src/plugin/fst/plugin.cpp resume/suspend).
+     */
     synth.set_sample_rate((Frequency)sampleRate);
+    synth.resume();
     renderer.reset();
     setLatencySamples((int)renderer.get_latency_samples());
 }
@@ -373,7 +387,17 @@ bool JS80PProcessor::isMidiEffect() const
 
 double JS80PProcessor::getTailLengthSeconds() const
 {
-    return 0.0;
+    /*
+     * The synth has feedback effects (echo, delay, chorus, reverb) plus
+     * envelope release stages that keep producing sound well after the last
+     * note-off, and those tails can ring effectively indefinitely. Reporting a
+     * zero tail (JUCE's default) makes hosts stop pulling audio the instant the
+     * last event ends, so offline bounces truncate the tails that are audible
+     * in realtime -- the legacy VST3 wrapper avoided this by advertising
+     * Vst::kInfiniteTail (see src/plugin/vst3/plugin.cpp, getTailSamples).
+     * JUCE maps an infinite tail to std::numeric_limits<double>::infinity().
+     */
+    return std::numeric_limits<double>::infinity();
 }
 
 
@@ -395,8 +419,33 @@ void JS80PProcessor::setCurrentProgram(int index)
         return;
     }
 
+    /*
+     * Reloading a factory bank program overwrites the live synth with that
+     * preset, discarding any edits (and any patch just restored via
+     * setStateInformation, which does not persist the program index). Hosts
+     * routinely re-assert the current program -- e.g. when starting an offline
+     * bounce or reloading a session -- so only reload when the program actually
+     * changes; a redundant re-selection of the current program must be a no-op,
+     * otherwise the user's patch silently reverts to the factory preset.
+     */
+    if (index == current_program) {
+        return;
+    }
+
     current_program = index;
     Serializer::import_patch_in_gui_thread(synth, bank[index].serialize());
+
+    /*
+     * A freshly loaded factory program is not a user edit, so clear the dirty
+     * flag exactly as the legacy VST3 processor did right after importing a
+     * program (see src/plugin/vst3/plugin.cpp, process()).
+     */
+    synth.push_message(
+        Synth::MessageType::CLEAR_DIRTY_FLAG,
+        Synth::ParamId::INVALID_PARAM_ID,
+        0.0,
+        0
+    );
 }
 
 

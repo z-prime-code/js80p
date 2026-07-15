@@ -16,6 +16,8 @@ on:
   # Allow manual runs to smoke-test the build; these upload the zips as
   # workflow artifacts only (no release to attach to).
   workflow_dispatch:
+  push:
+    branches: [main, feat/juce-gui]
 
 permissions:
   contents: write
@@ -97,7 +99,7 @@ jobs:
         run: |
           version="${{ github.event.release.tag_name || github.sha }}"
           pushd build/JS80P_artefacts/Release/VST3
-          zip="$GITHUB_WORKSPACE/JS80P-vibed-VST3-${version}-${{ matrix.name }}.zip"
+          zip="$GITHUB_WORKSPACE/JS80P-VST3-${version}-${{ matrix.name }}.zip"
           7z a -tzip -mx=9 -mfb=258 -mpass=15 "$zip" JS80P.vst3
           echo "ASSET=$zip" >> "$GITHUB_ENV"
 

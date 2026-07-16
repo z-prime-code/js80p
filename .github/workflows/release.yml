@@ -11,16 +11,20 @@
 #   * Linux / macOS build with Ninja + the system/Apple compiler.
 #   * Windows builds with the Visual Studio generator's ClangCL toolset
 #     (clang-cl) — MSVC cl.exe and MinGW are rejected by CMakeLists.txt.
-name: Release
+name: Build / Release
 
 on:
   # Build + upload assets when a GitHub Release is created.
   release:
-    types: [created]
+    types:
+      - created
+      - edited
   # Allow manual runs to smoke-test the build; these upload the zips as
   # workflow artifacts only (no release to attach to).
   workflow_dispatch:
   push:
+    branches:
+      - '**'
 
 permissions:
   contents: write

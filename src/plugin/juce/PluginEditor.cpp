@@ -8,7 +8,10 @@ JS80PEditor::JS80PEditor(JS80PProcessor& processor)
     : juce::AudioProcessorEditor(&processor),
     root(processor.get_synth(), JucePlugin_VersionString)
 {
-    setResizable(true, true);
+    /* Resizable, but without AudioProcessorEditor's own corner grip: EditorRoot
+     * carries one (the VST3 build has no wrapper to supply it), and two would
+     * otherwise sit on top of each other here. */
+    setResizable(true, false);
 
     int const bw = EditorRoot::base_width();
     int const bh = EditorRoot::base_height();

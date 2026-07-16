@@ -95,26 +95,16 @@ class NewGui : public juce::Component, private juce::Timer
         void layout_cards();
         void init_patch();
 
-        /* Header preset actions (mirroring the original GUI's buttons). */
+        /* Header preset actions. Each is the original GUI's corresponding button
+         * and nothing more: open_preset() / save_preset() are
+         * Serializer::import_patch_in_gui_thread() / ::serialize() behind a file
+         * chooser (ImportPatchButton / ExportPatchButton, src/gui/widgets.cpp),
+         * and randomize_preset() is a bare RANDOMIZE push (RandomizePatchButton).
+         * The patch a user gets from these must not depend on which GUI issued
+         * them, so resist adding behaviour here. */
         void open_preset();
         void save_preset();
         void randomize_preset();
-
-        /* RANDOMIZE runs on the audio thread and consumes macro slots from 1
-         * upward, clobbering the 8 performance macros. randomize_preset() snaps
-         * their input + range first; once the message has drained,
-         * restore_performance_macros() relocates the random patch's use of
-         * macros 1-8 onto free pool slots (9-30) and writes the captured values
-         * back into 1-8. macro_signature() is a cheap fingerprint used to detect
-         * that the randomize has landed. */
-        void restore_performance_macros();
-        double macro_signature() const;
-
-        struct SavedMacro {
-            Synth::ControllerId input;
-            double min;
-            double max;
-        };
 
         ParamBridge bridge;
         /* Header action buttons, styled like the BPM / COMP mini buttons:
@@ -129,10 +119,6 @@ class NewGui : public juce::Component, private juce::Timer
         EffectsPage effects_page;
         Page active_page;
 
-        /* Performance-macro preservation across RANDOMIZE (see above). */
-        SavedMacro saved_macros[MacroStrip::COUNT];
-        int restore_macros_ticks;    /* >0 while waiting for randomize to drain */
-        double randomize_signature;  /* macro fingerprint captured pre-randomize */
         /* Enables the small dot controls' tooltips (osc/env inaccuracy). */
         juce::TooltipWindow tooltip_window { this };
         juce::Viewport mod_viewport;

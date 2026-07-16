@@ -44,31 +44,37 @@ void EditorRoot::apply_size_constraints(int& width, int& height) const
     double const bw = (double)base_width();
     double const bh = (double)base_height();
 
-    double const scale_from_width = (double)width / bw;
-    double const scale_from_height = (double)height / bh;
-
-    /* Which edge did the user drag? The host doesn't say, so treat the axis that
-     * moved further from the scale we're currently at as the intended one. */
-    double const current = (
-        getWidth() > 0 ? (double)getWidth() / bw : scale_from_width
-    );
-
+    /* The diagonal of the proposed rectangle, projected onto the locked aspect
+     * ratio: both axes contribute, so the result moves continuously with the
+     * rectangle the host hands us.
+     *
+     * The previous rule instead guessed which edge the user had dragged (the
+     * axis whose implied scale departed further from the current one) and used
+     * that axis alone. Because it compared against the *current* size, which
+     * this very function had just changed, the guess could flip from one drag
+     * event to the next: successive rectangles a few pixels apart would resolve
+     * alternately to the width- and height-derived scale, and the window jumped
+     * between the two. Projection has no branch to flip.
+     *
+     * The scale is quantised to whole pixels of width so that a drag that does
+     * not move far enough to change the snapped size reports the size it already
+     * has -- see handle_resize_request(), which drops no-op resizes on that
+     * basis, and would otherwise ping-pong the host with sub-pixel corrections. */
     double scale = (
-        std::fabs(scale_from_width - current)
-            >= std::fabs(scale_from_height - current)
-            ? scale_from_width
-            : scale_from_height
+        ((double)width * bw + (double)height * bh) / (bw * bw + bh * bh)
     );
 
     scale = juce::jlimit(MIN_SCALE, MAX_SCALE, scale);
 
     width = juce::roundToInt(bw * scale);
-    height = juce::roundToInt(bh * scale);
+    height = juce::roundToInt((double)width * bh / bw);
 }
 
 
 EditorRoot::EditorRoot(Synth& synth, char const* const version)
     : gui(nullptr),
+    synth(synth),
+    version(version),
     matrix_active(false),
     in_resize(false)
 {
@@ -80,6 +86,40 @@ EditorRoot::EditorRoot(Synth& synth, char const* const version)
 
     instances.add(this);
 
+    /* NB the legacy GUI is deliberately NOT built here; see ensure_legacy_gui(). */
+
+    /* Host for the embedded legacy GUI (hidden until the MATRIX tab is active). */
+    addChildComponent(matrix_host);
+
+    /* New simplified GUI — opaque, on top, shown by default. */
+    new_gui = std::make_unique<NewGui>(synth);
+    new_gui->on_matrix = [this](bool const active) { set_matrix(active); };
+    addAndMakeVisible(*new_gui);
+
+    /* One rule for both builds: zoom, never reflow. */
+    constrainer.setFixedAspectRatio((double)base_width() / (double)base_height());
+    constrainer.setSizeLimits(
+        (int)((double)base_width() * MIN_SCALE),
+        (int)((double)base_height() * MIN_SCALE),
+        (int)((double)base_width() * MAX_SCALE),
+        (int)((double)base_height() * MAX_SCALE)
+    );
+
+    resizer = std::make_unique<juce::ResizableCornerComponent>(this, &constrainer);
+    addAndMakeVisible(*resizer);
+
+    startTimerHz((int)JS80P::GUI::REFRESH_RATE);
+
+    resized();
+}
+
+
+void EditorRoot::ensure_legacy_gui()
+{
+    if (gui != nullptr) {
+        return;
+    }
+
     /* Original GUI (JUCE Widget backend). Its root is reparented into matrix_host
      * so the new GUI can embed it, contained, under its MATRIX tab. */
     gui = new JS80P::GUI(
@@ -90,24 +130,11 @@ EditorRoot::EditorRoot(Synth& synth, char const* const version)
         true,
         this
     );
-    gui->show();
-
-    /* Host for the embedded legacy GUI (hidden until the MATRIX tab is active). */
-    addChildComponent(matrix_host);
 
     if (juce::Component* const legacy_root =
             (juce::Component*)gui->get_root_platform_widget()) {
         matrix_host.addChildComponent(legacy_root);
     }
-
-    /* New simplified GUI — opaque, on top, shown by default. */
-    new_gui = std::make_unique<NewGui>(synth);
-    new_gui->on_matrix = [this](bool const active) { set_matrix(active); };
-    addAndMakeVisible(*new_gui);
-
-    startTimerHz((int)JS80P::GUI::REFRESH_RATE);
-
-    resized();
 }
 
 
@@ -169,6 +196,12 @@ void EditorRoot::sync_all_to_shared(EditorRoot const* const source)
 
 void EditorRoot::set_matrix(bool const active)
 {
+    /* First entry into the tab is what pays for the legacy GUI, rather than
+     * every editor open. */
+    if (active) {
+        ensure_legacy_gui();
+    }
+
     matrix_active = active;
     matrix_host.setVisible(active);
 
@@ -176,6 +209,7 @@ void EditorRoot::set_matrix(bool const active)
         gui->show();
         layout_matrix();
         matrix_host.toFront(false);   /* over the new GUI's body, below its header */
+        resizer->toFront(false);      /* ...but never over the grip */
     }
 }
 
@@ -224,6 +258,13 @@ void EditorRoot::resized()
         shared_width = getWidth();
         shared_height = getHeight();
         sync_all_to_shared(this);
+
+        /* The grip resizes THIS component; the host still believes the window is
+         * whatever it last set. Tell it. Resizes that came from the host reach
+         * here too, and would bounce straight back -- but by then the host's own
+         * rect already matches, and request_resize drops sizes equal to the
+         * current one, so the echo stops there rather than looping. */
+        request_resize(getWidth(), getHeight());
     }
 
     if (new_gui != nullptr) {
@@ -238,11 +279,21 @@ void EditorRoot::resized()
         layout_matrix();
         matrix_host.toFront(false);
     }
+
+    if (resizer != nullptr) {
+        /* Untransformed, unlike new_gui, so it stays a fixed grab target at any
+         * zoom; kept above whatever else was just raised. */
+        int const grip = 16;
+
+        resizer->setBounds(getWidth() - grip, getHeight() - grip, grip, grip);
+        resizer->toFront(false);
+    }
 }
 
 
 void EditorRoot::timerCallback()
 {
+    /* NULL until the MATRIX tab is first opened; nothing to idle before that. */
     if (gui != nullptr) {
         gui->idle();
     }

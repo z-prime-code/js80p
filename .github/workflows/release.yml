@@ -70,28 +70,24 @@ jobs:
             libxinerama-dev libxrandr-dev libxrender-dev
 
       # ── Version ───────────────────────────────────────────────
-      # scripts/release.sh takes the version from the git tag on HEAD and
-      # derives the rest; do the same from the release tag, so the dist path
-      # names the version actually being released rather than whatever
-      # project() in CMakeLists.txt happens to say. Untagged runs
-      # (workflow_dispatch / push) get release.sh's development version, which
-      # is why 999.0.0 and the short SHA appear here.
+      # A release build takes its version from the release tag, verbatim minus
+      # the leading "v" (so v4.1.1-vibed-3 -> 4.1.1-vibed-3); every other
+      # trigger (push / workflow_dispatch) is a development build named
+      # DEV-<short-sha>. STR is shown on the About screen and flows unchanged
+      # all the way into the dist path via FILE, which only folds characters
+      # that are unsafe in a path (keeping letters, digits and dashes). INT is
+      # the packed digits-only integer CMakeLists.txt would otherwise derive.
       - name: Version
         shell: bash
         run: |
           tag="${{ github.event.release.tag_name }}"
+          str="${tag#v}"
+          str="${str:-DEV-$(git log -1 --pretty=%h)}"
 
-          if [[ "$tag" =~ ^v[0-9][-.0-9a-zA-Z]+$ ]]; then
-            dot="${tag:1}"
-            str="$dot"
-          else
-            dot="999.0.0"
-            str="$dot-$(git log -1 --pretty=%h)"
-          fi
-
-          # version_str_to_int / version_str_to_file_name, release.sh:389-398.
-          int="$(printf '%s0\n' "$dot" | sed 's/[^0-9]//g')"
-          file="$(printf '%s\n' "$str" | sed 's/[^0-9a-f-]/_/g')"
+          # version_str_to_int / version_str_to_file_name, release.sh:264-276,
+          # but keep the whole label (letters included) in the file name.
+          int="$(printf '%s0\n' "$str" | sed 's/[^0-9]//g')"
+          file="$(printf '%s\n' "$str" | sed 's/[^0-9A-Za-z-]/_/g')"
 
           {
             echo "JS80P_VERSION_STR=$str"

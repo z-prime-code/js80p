@@ -17,7 +17,6 @@ on:
   # workflow artifacts only (no release to attach to).
   workflow_dispatch:
   push:
-    branches: [main, feat/juce-gui]
 
 permissions:
   contents: write

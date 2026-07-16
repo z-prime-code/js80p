@@ -35,7 +35,13 @@
 
 #include "gui/gui.hpp"
 
-#if SMTG_OS_LINUX
+#ifdef JS80P_JUCE_GUI
+/* The editor is the JUCE one, and it is platform-independent, so the whole of
+ * Vst3Plugin::GUI lives in plugin-juce.cpp instead of the three files below --
+ * as a translation unit of its own, compiled by CMakeLists.txt, so that JUCE's
+ * headers never meet the VST3 SDK's in here. */
+#include "plugin/vst3/juce_gui.hpp"
+#elif SMTG_OS_LINUX
 #include "plugin/vst3/plugin-xcb.cpp"
 #elif SMTG_OS_WINDOWS
 #include "plugin/vst3/plugin-win32.cpp"
@@ -765,6 +771,8 @@ tresult PLUGIN_API Vst3Plugin::Processor::getState(IBStream* state)
 }
 
 
+#ifndef JS80P_JUCE_GUI
+
 Vst3Plugin::GUI::GUI(Synth& synth, ViewRect& gui_size)
     : CPluginView(&gui_size),
     synth(synth),
@@ -883,12 +891,35 @@ void Vst3Plugin::GUI::show_if_needed()
     initialize();
 }
 
+#endif
+
 
 FUnknown* Vst3Plugin::Controller::createInstance(void* unused)
 {
     return (IEditController*)new Vst3Plugin::Controller();
 }
 
+
+#ifdef JS80P_JUCE_GUI
+
+Vst3Plugin::Controller::Controller()
+    : juce_runtime(JuceGui::create_runtime()),
+    bank(),
+    synth(NULL),
+    gui_size(0, 0, 0, 0)
+{
+    /* Hosts ask the view for its size before it is attached (and CPluginView
+     * answers out of gui_size), so it has to be right from the start. */
+    int width = 0;
+    int height = 0;
+
+    JuceGui::preferred_size(width, height);
+
+    gui_size.right = (int32)width;
+    gui_size.bottom = (int32)height;
+}
+
+#else
 
 Vst3Plugin::Controller::Controller()
     : bank(),
@@ -897,9 +928,16 @@ Vst3Plugin::Controller::Controller()
 {
 }
 
+#endif
+
 
 Vst3Plugin::Controller::~Controller()
 {
+#ifdef JS80P_JUCE_GUI
+    JuceGui::destroy_runtime(juce_runtime);
+
+    juce_runtime = NULL;
+#endif
 }
 
 

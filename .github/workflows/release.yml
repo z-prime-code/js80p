@@ -1,6 +1,10 @@
-# Build the JUCE JS80P plugin (VST3 + Standalone) on Windows, Linux and macOS
-# with CMake, and attach the packaged artifacts to the GitHub Release that
-# triggered the run.
+# Build JS80P on Windows, Linux and macOS with CMake, and attach the packaged
+# artifacts to the GitHub Release that triggered the run.
+#
+# The VST3 is JS80P's original hand-rolled implementation with the JUCE GUI on
+# top, so it keeps the original's class IDs, parameters and state format; the
+# Standalone that also builds is a GUI development aid and is not packaged. See
+# CMakeLists.txt.
 #
 # The build mirrors BUILD.md / CMakeLists.txt:
 #   * JUCE 8.0.14 is fetched by CMake on first configure (FetchContent).
@@ -61,25 +65,72 @@ jobs:
             libx11-dev libxcomposite-dev libxcursor-dev libxext-dev \
             libxinerama-dev libxrandr-dev libxrender-dev
 
+      # ── Version ───────────────────────────────────────────────
+      # scripts/release.sh takes the version from the git tag on HEAD and
+      # derives the rest; do the same from the release tag, so the dist path
+      # names the version actually being released rather than whatever
+      # project() in CMakeLists.txt happens to say. Untagged runs
+      # (workflow_dispatch / push) get release.sh's development version, which
+      # is why 999.0.0 and the short SHA appear here.
+      - name: Version
+        shell: bash
+        run: |
+          tag="${{ github.event.release.tag_name }}"
+
+          if [[ "$tag" =~ ^v[0-9]+\.[0-9]\.[0-9]$ ]]; then
+            dot="${tag:1}"
+            str="$dot"
+          else
+            dot="999.0.0"
+            str="$dot-$(git log -1 --pretty=%h)"
+          fi
+
+          # version_str_to_int / version_str_to_file_name, release.sh:389-398.
+          int="$(printf '%s0\n' "$dot" | sed 's/[^0-9]//g')"
+          file="$(printf '%s\n' "$str" | sed 's/[^0-9a-f-]/_/g')"
+
+          {
+            echo "JS80P_VERSION_STR=$str"
+            echo "JS80P_VERSION_INT=$int"
+            echo "JS80P_VERSION_AS_FILE_NAME=$file"
+          } >> "$GITHUB_ENV"
+
+          echo "Building version: $str (int $int, path token $file)"
+
       # ── Configure ─────────────────────────────────────────────
       - name: Configure (Linux)
         if: runner.os == 'Linux'
-        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        run: >
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          "-DJS80P_VERSION_STR=$JS80P_VERSION_STR"
+          "-DJS80P_VERSION_INT=$JS80P_VERSION_INT"
+          "-DJS80P_VERSION_AS_FILE_NAME=$JS80P_VERSION_AS_FILE_NAME"
 
       - name: Configure (macOS)
         if: runner.os == 'macOS'
-        # Build a universal binary so the release runs on both Apple Silicon
-        # and Intel Macs.
+        # One universal binary covering Apple Silicon and Intel, as the original
+        # ships. release.sh gets there by building arm64 and x86_64 separately
+        # and lipo-ing them; CMAKE_OSX_ARCHITECTURES makes the fat Mach-O in a
+        # single pass, and CMakeLists.txt puts AVX on the x86_64 slice alone
+        # (-Xarch_x86_64), which is what the original's per-arch -mavx did.
         run: >
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
           "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+          "-DJS80P_VERSION_STR=$JS80P_VERSION_STR"
+          "-DJS80P_VERSION_INT=$JS80P_VERSION_INT"
+          "-DJS80P_VERSION_AS_FILE_NAME=$JS80P_VERSION_AS_FILE_NAME"
 
       - name: Configure (Windows)
         if: runner.os == 'Windows'
         # The windows runner ships VS 2022 with the "C++ Clang tools" component,
         # so the ClangCL toolset gives us clang-cl (the only supported Windows
         # compiler) via the Visual Studio generator.
-        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -T ClangCL
+        shell: bash
+        run: >
+          cmake -B build -G "Visual Studio 17 2022" -A x64 -T ClangCL
+          "-DJS80P_VERSION_STR=$JS80P_VERSION_STR"
+          "-DJS80P_VERSION_INT=$JS80P_VERSION_INT"
+          "-DJS80P_VERSION_AS_FILE_NAME=$JS80P_VERSION_AS_FILE_NAME"
 
       # ── Build ─────────────────────────────────────────────────
       - name: Build
@@ -96,10 +147,31 @@ jobs:
       - name: Package
         shell: bash
         run: |
-          version="${{ github.event.release.tag_name || github.sha }}"
-          pushd build/JS80P_artefacts/Release/VST3
-          zip="$GITHUB_WORKSPACE/JS80P-VST3-${version}-${{ matrix.name }}.zip"
-          7z a -tzip -mx=9 -mfb=258 -mpass=15 "$zip" JS80P.vst3
+          # The build emits the original plugin's own dist layout, so the
+          # artefact is a lower-case js80p.vst3 under one of
+          #   build/dist/js80p-<v>-linux-x86_64-avx-vst3_single/
+          #   build/dist/js80p-<v>-windows-x86_64-avx-vst3_single/
+          #   build/dist/js80p-<v>-macos-universal-vst3_bundle/
+          # (see JS80P_DIST_DIR in CMakeLists.txt) -- a bare shared library on
+          # Linux/Windows, a bundle directory on macOS. Glob for either rather
+          # than spelling the tokens out here, and name the zip after the
+          # directory, as scripts/release.sh's finalize_zip does.
+          dir=(build/dist/js80p-*-vst3_single build/dist/js80p-*-vst3_bundle)
+          # Unmatched globs stay literal, so drop the pattern that missed.
+          for i in "${!dir[@]}"; do
+            [ -d "${dir[$i]}" ] || unset 'dir[$i]'
+          done
+          dir=("${dir[@]}")
+
+          if [ ${#dir[@]} -ne 1 ] || [ ! -e "${dir[0]}/js80p.vst3" ]; then
+            echo "expected exactly one built VST3, found: ${dir[*]}" >&2
+            exit 1
+          fi
+
+          name="$(basename "${dir[0]}")"
+          pushd "${dir[0]}"
+          zip="$GITHUB_WORKSPACE/${name}.zip"
+          7z a -tzip -mx=9 -mfb=258 -mpass=15 "$zip" js80p.vst3
           echo "ASSET=$zip" >> "$GITHUB_ENV"
 
       # ── Publish ───────────────────────────────────────────────

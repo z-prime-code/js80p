@@ -241,11 +241,22 @@ class Vst3Plugin
 
                 Synth& synth;
                 ViewRect& gui_size;
+
+#ifdef JS80P_JUCE_GUI
+                /* JS80P::EditorRoot*, left opaque so that this header and
+                 * plugin.cpp stay free of JUCE; plugin-juce.cpp owns everything
+                 * behind it. */
+                void* editor;
+#else
                 JS80P::GUI* gui;
+#endif
 
 #if SMTG_OS_LINUX
                 void* run_loop;
                 void* event_handler;
+
+                /* Unused in the JS80P_JUCE_GUI build: JUCE's timers are driven by
+                 * its message loop, which run_loop already services. */
                 void* timer_handler;
 #endif
         };
@@ -300,6 +311,14 @@ class Vst3Plugin
                 ) const;
 
                 Vst::RangeParameter* set_up_patch_changed_param() const;
+
+#ifdef JS80P_JUCE_GUI
+                /* JuceGui::create_runtime(): keeps JUCE initialised and the
+                 * editors' shared caches alive for this instance's lifetime.
+                 * Declared first so that JUCE is up before any member that might
+                 * come to need it; torn down in the destructor body. */
+                void* juce_runtime;
+#endif
 
                 Bank const bank;
 

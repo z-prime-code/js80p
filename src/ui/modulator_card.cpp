@@ -236,6 +236,18 @@ void ModulatorCard::toggle_sync()
 
 void ModulatorCard::propagate()
 {
+    /* Only write when the member actually differs from the representative:
+     * set_ratio unconditionally marks the synth dirty (see Synth::handle_set_param),
+     * so copying identical values every timer tick would keep re-dirtying the
+     * project even though the user never touched a control. */
+    auto sync = [this](Synth::ParamId const dst, Synth::ParamId const src) {
+        double const source = bridge.get_ratio(src);
+
+        if (std::fabs(bridge.get_ratio(dst) - source) > 1.0e-9) {
+            bridge.set_ratio(dst, source);
+        }
+    };
+
     for (int m : members) {
         if (m == rep) {
             continue;
@@ -244,18 +256,18 @@ void ModulatorCard::propagate()
         if (type == Modulation::ENVELOPE) {
             int const off[] = { 0, 2, 3, 5, 6, 8 };  /* SCL, DEL, ATK, HLD, DEC, REL */
             for (int o : off) {
-                bridge.set_ratio(Modulation::pid((int)Modulation::env_scl(m) + o),
-                                 bridge.get_ratio(Modulation::pid((int)Modulation::env_scl(rep) + o)));
+                sync(Modulation::pid((int)Modulation::env_scl(m) + o),
+                     Modulation::pid((int)Modulation::env_scl(rep) + o));
             }
         } else if (type == Modulation::LFO) {
-            bridge.set_ratio(Modulation::lfo_wav(m), bridge.get_ratio(Modulation::lfo_wav(rep)));
-            bridge.set_ratio(Modulation::lfo_frq(m), bridge.get_ratio(Modulation::lfo_frq(rep)));
-            bridge.set_ratio(Modulation::lfo_phs(m), bridge.get_ratio(Modulation::lfo_phs(rep)));
-            bridge.set_ratio(Modulation::lfo_dst(m), bridge.get_ratio(Modulation::lfo_dst(rep)));
-            bridge.set_ratio(Modulation::lfo_rnd(m), bridge.get_ratio(Modulation::lfo_rnd(rep)));
+            sync(Modulation::lfo_wav(m), Modulation::lfo_wav(rep));
+            sync(Modulation::lfo_frq(m), Modulation::lfo_frq(rep));
+            sync(Modulation::lfo_phs(m), Modulation::lfo_phs(rep));
+            sync(Modulation::lfo_dst(m), Modulation::lfo_dst(rep));
+            sync(Modulation::lfo_rnd(m), Modulation::lfo_rnd(rep));
 
             if (Modulation::lfo_has_pw(rep) && Modulation::lfo_has_pw(m)) {
-                bridge.set_ratio(Modulation::lfo_pw(m), bridge.get_ratio(Modulation::lfo_pw(rep)));
+                sync(Modulation::lfo_pw(m), Modulation::lfo_pw(rep));
             }
         }
     }

@@ -46,8 +46,48 @@ class EditorRoot : public juce::Component,
         static int base_height();
 
         /** The size an editor should open at: the size last chosen this session
-         *  (shared across instances), or the 1.0x default if unset. */
+         *  (shared across instances), or the 1.0x default if unset. Logical
+         *  pixels, like every other size on this class. */
         static void preferred_size(int& width, int& height);
+
+        /**
+         * \brief Physical pixels per logical one -- 2.0 on a 200% HiDPI screen.
+         *
+         *        Detected here rather than negotiated by the host wrapper: when
+         *        this component owns its window, that window's peer has already
+         *        worked the display scale out from the OS by the time
+         *        addToDesktop() returns, so the size reported at open is right
+         *        immediately -- before the host sends a size, before the user
+         *        touches the grip, and without waiting on a VST3
+         *        setContentScaleFactor() that may come late or never.
+         *
+         *        1.0 when the window belongs to someone above us (the Standalone
+         *        build, where the AudioProcessorEditor is the desktop component):
+         *        that ancestor's peer applies the display scale to us already, so
+         *        there is nothing left over to apply, and our own coordinates are
+         *        the ones the wrapper is using anyway.
+         */
+        double content_scale() const;
+
+        /** Convert between our logical pixels and the host's physical ones, so
+         *  wrappers can stay out of the arithmetic. */
+        int to_physical(int const logical) const;
+        int to_logical(int const physical) const;
+
+        /** preferred_size(), in physical pixels: what a host that speaks physical
+         *  pixels should be told to open the window at. */
+        void preferred_physical_size(int& width, int& height) const;
+
+        /**
+         * \brief Override the detected scale with one a host negotiated (VST3's
+         *        IPlugViewContentScaleSupport). Pushed onto the peer, which is the
+         *        single source of truth content_scale() reads back from, so a host
+         *        that disagrees with the OS wins from here on. Hosts that never
+         *        call this stay on what the peer detected.
+         *
+         * \return whether the scale in force actually changed.
+         */
+        bool set_host_scale(double const scale);
 
         /**
          * \brief Snap a host-proposed size to the locked aspect ratio and the
@@ -102,6 +142,17 @@ class EditorRoot : public juce::Component,
 
         /* Route a size change through the host when it owns the window. */
         void request_resize(int const width, int const height);
+
+        /* The peer, but only when it is ours -- i.e. when this component was put
+         * on the desktop directly (the VST3 build) rather than sitting inside
+         * someone else's window (the Standalone build). Everything scale-related
+         * hangs off that distinction; see content_scale(). */
+        juce::ComponentPeer* own_peer() const;
+
+        /* Scale the host negotiated, or 0.0 for "none yet". Kept so it can be
+         * re-applied to the peer if the window is rebuilt after the host has
+         * already spoken. */
+        double host_scale;
 
         /* Show / hide + size the embedded legacy GUI when the MATRIX tab of the
          * new GUI is entered / left. */

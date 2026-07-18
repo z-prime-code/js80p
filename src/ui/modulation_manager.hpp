@@ -119,6 +119,12 @@ class ModulationManager
         void reserve_group(Modulation::Type const type, std::vector<int> const& slots);
 
     private:
+        /* If \c source is a macro that has no input controller of its own, pin its
+         * IN to 0 so that the MIN it was dialled to is exactly what it emits.
+         * Called as such a macro is routed somewhere, which is the point at which
+         * a stale IN would start scaling someone's range. */
+        void pin_detached_source(Synth::ControllerId const source);
+
         std::string shape_key(Modulation::Type const type, int const index) const;
         int allocate(Modulation::Type const type, bool const need_pw);
         void copy_shape(Modulation::Type const type, int const from, int const to);

@@ -1,4 +1,5 @@
 #include <cmath>
+#include <optional>
 
 #include "ui/editor_root.hpp"
 
@@ -39,6 +40,90 @@ void EditorRoot::preferred_size(int& width, int& height)
 }
 
 
+juce::ComponentPeer* EditorRoot::own_peer() const
+{
+    juce::ComponentPeer* const peer = getPeer();
+
+    if (peer == nullptr || &peer->getComponent() != this) {
+        return nullptr;
+    }
+
+    return peer;
+}
+
+
+double EditorRoot::content_scale() const
+{
+    juce::ComponentPeer* const peer = own_peer();
+
+    /* Not our window: whoever owns it has already scaled us, so there is no
+     * remainder. Also the state before addToDesktop(), where 1.0 is the only
+     * honest answer -- nothing has been sized or painted at that point either. */
+    if (peer == nullptr) {
+        return 1.0;
+    }
+
+    /* Whatever set_host_scale() pushed, if anything; otherwise what the peer
+     * worked out from the OS when the window was created. */
+    double const scale = peer->getPlatformScaleFactor();
+
+    return scale > 0.0 ? scale : 1.0;
+}
+
+
+int EditorRoot::to_physical(int const logical) const
+{
+    return juce::roundToInt((double)logical * content_scale());
+}
+
+
+int EditorRoot::to_logical(int const physical) const
+{
+    return juce::roundToInt((double)physical / content_scale());
+}
+
+
+void EditorRoot::preferred_physical_size(int& width, int& height) const
+{
+    preferred_size(width, height);
+
+    double const scale = content_scale();
+
+    width = juce::roundToInt((double)width * scale);
+    height = juce::roundToInt((double)height * scale);
+}
+
+
+bool EditorRoot::set_host_scale(double const scale)
+{
+    if (scale <= 0.0) {
+        return false;
+    }
+
+    bool const changed = host_scale != scale;
+
+    host_scale = scale;
+
+    juce::ComponentPeer* const peer = own_peer();
+
+    if (peer == nullptr) {
+        /* No window yet; nothing to push onto. The value is kept so that
+         * whoever builds the window can re-apply it. */
+        return changed;
+    }
+
+    if (!changed && peer->getCustomPlatformScaleFactor().has_value()) {
+        return false;
+    }
+
+    /* Override the peer's OS-derived scaling with the host's: from here
+     * content_scale() reads this value back out. */
+    peer->setCustomPlatformScaleFactor(std::optional<double>(scale));
+
+    return changed;
+}
+
+
 void EditorRoot::apply_size_constraints(int& width, int& height) const
 {
     double const bw = (double)base_width();
@@ -72,7 +157,8 @@ void EditorRoot::apply_size_constraints(int& width, int& height) const
 
 
 EditorRoot::EditorRoot(Synth& synth, char const* const version)
-    : gui(nullptr),
+    : host_scale(0.0),
+    gui(nullptr),
     synth(synth),
     version(version),
     matrix_active(false),

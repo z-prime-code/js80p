@@ -23,6 +23,7 @@
 #include <vector>
 
 #include <vst3sdk/pluginterfaces/gui/iplugview.h>
+#include <vst3sdk/pluginterfaces/gui/iplugviewcontentscalesupport.h>
 #include <vst3sdk/pluginterfaces/vst/ivstmessage.h>
 #include <vst3sdk/pluginterfaces/vst/ivstmidicontrollers.h>
 #include <vst3sdk/pluginterfaces/vst/vsttypes.h>
@@ -209,6 +210,9 @@ class Vst3Plugin
         class Controller;
 
         class GUI : public CPluginView, JS80P::GUI::EventHandler
+#ifdef JS80P_JUCE_GUI
+                  , public IPlugViewContentScaleSupport
+#endif
         {
             public:
                 explicit GUI(Synth& synth, ViewRect& gui_size);
@@ -226,6 +230,17 @@ class Vst3Plugin
                 ) SMTG_OVERRIDE;
 
                 tresult PLUGIN_API onSize(ViewRect* newSize) SMTG_OVERRIDE;
+
+#ifdef JS80P_JUCE_GUI
+                /* How the host tells us the display scale on platforms where the
+                 * view can't discover it by itself (Windows, chiefly). Without
+                 * this the host and JUCE disagree about pixels on a HiDPI / 4K
+                 * screen and its size requests come out wrong -- see
+                 * plugin-juce.cpp. */
+                tresult PLUGIN_API setContentScaleFactor(
+                    IPlugViewContentScaleSupport::ScaleFactor factor
+                ) SMTG_OVERRIDE;
+#endif
 
                 virtual void attachedToParent() override;
                 virtual void removedFromParent() override;
@@ -247,6 +262,17 @@ class Vst3Plugin
                  * plugin.cpp stay free of JUCE; plugin-juce.cpp owns everything
                  * behind it. */
                 void* editor;
+
+                /* Set gui_size to the given physical size and tell the host. */
+                void report_size(int const phys_width, int const phys_height);
+
+                /* The scale the host negotiated, if it ever did -- kept only so
+                 * that it can be handed to the editor once the editor exists, as
+                 * the host may speak before then. The scale actually *in force*
+                 * lives in the editor, which detects it from the display without
+                 * being told; see EditorRoot::content_scale(). */
+                float content_scale;
+                bool has_host_scale;
 #else
                 JS80P::GUI* gui;
 #endif
@@ -258,6 +284,18 @@ class Vst3Plugin
                 /* Unused in the JS80P_JUCE_GUI build: JUCE's timers are driven by
                  * its message loop, which run_loop already services. */
                 void* timer_handler;
+#endif
+
+#ifdef JS80P_JUCE_GUI
+            public:
+                /* CPluginView only offers IPlugView; re-open the interface list to
+                 * also hand out IPlugViewContentScaleSupport, falling back to the
+                 * base for IPlugView / FUnknown. */
+                OBJ_METHODS(GUI, CPluginView)
+                DEFINE_INTERFACES
+                    DEF_INTERFACE(IPlugViewContentScaleSupport)
+                END_DEFINE_INTERFACES(CPluginView)
+                REFCOUNT_METHODS(CPluginView)
 #endif
         };
 

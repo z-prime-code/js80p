@@ -194,6 +194,31 @@ NewGui::~NewGui()
 }
 
 
+/* A handful of continuous oscillator params are block-rate (FloatParamB) in the
+ * engine, whose render() early-returns for non-SAMPLE evaluation - so an assigned
+ * envelope or LFO is a silent no-op. Velocity sensitivity, width and both
+ * portamento params take macro / MIDI only. Detune is sample-rate but has no
+ * envelope buffer, so it renders an LFO but never an envelope: LFO + macro. */
+static int osc_mod_caps(Synth::ParamId const id)
+{
+    using P = Synth::ParamId;
+
+    switch (id) {
+        case P::MVS:  case P::CVS:
+        case P::MWID: case P::CWID:
+        case P::MPRD: case P::CPRD:
+        case P::MPRT: case P::CPRT:
+            return Modulation::CAP_MACRO;
+
+        case P::MDTN: case P::CDTN:
+            return Modulation::CAP_LFO | Modulation::CAP_MACRO;
+
+        default:
+            return Modulation::CAP_ALL;
+    }
+}
+
+
 Knob& NewGui::add_knob(
         std::vector<Knob*>& column,
         Synth::ParamId const id,
@@ -203,9 +228,12 @@ Knob& NewGui::add_knob(
     knob->set_manager(&manager);
     /* Discrete (byte) params - e.g. the carrier distortion TYPE knob - only accept
      * macro / MIDI controllers in the engine; the LFO / envelope routes are no-ops
-     * for them, so don't offer them. Continuous oscillator params keep CAP_ALL. */
+     * for them, so don't offer them. Other oscillator params keep whatever the
+     * engine can actually render (see osc_mod_caps). */
     if (bridge.is_discrete(id)) {
         knob->set_mod_caps(Modulation::CAP_MACRO);
+    } else {
+        knob->set_mod_caps(osc_mod_caps(id));
     }
     knobs.add(knob);
     column.push_back(knob);
@@ -421,6 +449,14 @@ void NewGui::init_patch()
         if (saved[m] != Synth::ControllerId::NONE) {
             bridge.assign_controller(Modulation::macro_in(m + 1), saved[m]);
         }
+    }
+
+    /* 3b. A performance macro with no input source outputs its MIN (the knob
+     * value) directly, but only while its IN sits at 0 -- IN sweeps the output
+     * across MIN..MAX. The engine defaults IN to 50%, so pin every macro's IN to
+     * 0 here; assigning a CC source later drives IN live instead. */
+    for (int m = 0; m < MacroStrip::COUNT; ++m) {
+        bridge.set_ratio(Modulation::macro_in(m + 1), 0.0);
     }
 
     /* 4. Two explicit envelope groups (AMP = env 1+2, filter = env 3+4). */

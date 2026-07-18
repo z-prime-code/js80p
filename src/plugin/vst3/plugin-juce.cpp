@@ -192,7 +192,9 @@ Vst3Plugin::GUI::GUI(Synth& synth, ViewRect& gui_size)
     : CPluginView(&gui_size),
     synth(synth),
     gui_size(gui_size),
-    editor(NULL)
+    editor(NULL),
+    content_scale(1.0f),
+    has_host_scale(false)
 #if SMTG_OS_LINUX
     , run_loop(NULL),
     event_handler(NULL),
@@ -230,13 +232,18 @@ tresult PLUGIN_API Vst3Plugin::GUI::checkSizeConstraint(ViewRect* rect)
         return kResultTrue;
     }
 
-    int width = (int)rect->getWidth();
-    int height = (int)rect->getHeight();
+    EditorRoot* const root = (EditorRoot*)editor;
 
-    ((EditorRoot*)editor)->apply_size_constraints(width, height);
+    /* The host proposes a rectangle in its own (physical) pixels; the editor's
+     * aspect/limit rule is expressed in JUCE's logical pixels, so drop into
+     * logical space to apply it and lift the answer back out. */
+    int width = root->to_logical((int)rect->getWidth());
+    int height = root->to_logical((int)rect->getHeight());
 
-    rect->right = rect->left + (int32)width;
-    rect->bottom = rect->top + (int32)height;
+    root->apply_size_constraints(width, height);
+
+    rect->right = rect->left + (int32)root->to_physical(width);
+    rect->bottom = rect->top + (int32)root->to_physical(height);
 
     return kResultTrue;
 }
@@ -252,10 +259,15 @@ tresult PLUGIN_API Vst3Plugin::GUI::onSize(ViewRect* newSize)
 
     gui_size = *newSize;
 
-    /* The component is on the desktop, so setSize() carries the new bounds down
-     * to its peer -- the window the host handed us -- as well. */
-    ((EditorRoot*)editor)->setSize(
-        (int)newSize->getWidth(), (int)newSize->getHeight()
+    EditorRoot* const root = (EditorRoot*)editor;
+
+    /* newSize is in the host's physical pixels; the component is laid out in
+     * logical ones and its peer scales those up by the display scale it detected
+     * (see EditorRoot::content_scale()). setSize() carries the new bounds down to
+     * that peer -- the window the host handed us -- as well. */
+    root->setSize(
+        root->to_logical((int)newSize->getWidth()),
+        root->to_logical((int)newSize->getHeight())
     );
 
     return result;
@@ -276,21 +288,29 @@ void Vst3Plugin::GUI::handle_resize_request(
         return;
     }
 
+    EditorRoot* const root = (EditorRoot*)editor;
+
     int width = new_width;
     int height = new_height;
 
-    ((EditorRoot*)editor)->apply_size_constraints(width, height);
+    root->apply_size_constraints(width, height);
+
+    /* new_width/height come from the editor in logical pixels; the host's rect
+     * is in physical ones. */
+    int const phys_width = root->to_physical(width);
+    int const phys_height = root->to_physical(height);
 
     ViewRect current_rect;
 
     getSize(&current_rect);
 
-    if (current_rect.getWidth() == width && current_rect.getHeight() == height) {
+    if (current_rect.getWidth() == phys_width
+            && current_rect.getHeight() == phys_height) {
         return;
     }
 
-    current_rect.right = current_rect.left + (int32)width;
-    current_rect.bottom = current_rect.top + (int32)height;
+    current_rect.right = current_rect.left + (int32)phys_width;
+    current_rect.bottom = current_rect.top + (int32)phys_height;
 
     /* Comes back to us as onSize(), which is what actually resizes the editor. */
     plugFrame->resizeView(this, &current_rect);
@@ -337,16 +357,99 @@ void Vst3Plugin::GUI::initialize()
     root->addToDesktop(0, (void*)systemWindow);
     root->setVisible(true);
 
+    /* The peer exists now, which means the editor can see the display scale --
+     * and if the host happened to negotiate one before the window existed, it can
+     * be pushed onto the peer now. Either way this settles before anything is
+     * measured or painted below. */
+    if (has_host_scale) {
+        root->set_host_scale((double)content_scale);
+    }
+
     /* The host sized the window from whatever getSize() reported before the
-     * editor existed; tell it what the editor actually wants now. */
+     * editor existed; tell it what the editor actually wants now. The editor
+     * thinks in logical pixels, gui_size is what the host sees, i.e. physical --
+     * already at the right scale for this display, without having had to wait for
+     * setContentScaleFactor() (which some hosts never send). */
     int width = 0;
     int height = 0;
 
     EditorRoot::preferred_size(width, height);
     root->setSize(width, height);
 
-    gui_size.right = gui_size.left + (int32)width;
-    gui_size.bottom = gui_size.top + (int32)height;
+    int phys_width = 0;
+    int phys_height = 0;
+
+    root->preferred_physical_size(phys_width, phys_height);
+
+    gui_size.right = gui_size.left + (int32)phys_width;
+    gui_size.bottom = gui_size.top + (int32)phys_height;
+    setRect(gui_size);
+
+    if (plugFrame != NULL) {
+        plugFrame->resizeView(this, &gui_size);
+    }
+}
+
+
+tresult PLUGIN_API Vst3Plugin::GUI::setContentScaleFactor(
+        IPlugViewContentScaleSupport::ScaleFactor factor
+) {
+#if SMTG_OS_MACOS
+    /* macOS scales the backing store itself; JUCE's own VST3 wrapper likewise
+     * declines this on the Mac. */
+    (void)factor;
+
+    return kResultFalse;
+#else
+    if (factor <= 0.0f) {
+        return kResultFalse;
+    }
+
+    /* Only ever an override of what the editor already detected for itself: the
+     * window is sized correctly for the display from the moment it opens, and
+     * this corrects it afterwards if the host disagrees. Remembered even when the
+     * editor doesn't exist yet, so initialize() can apply it to the new peer. */
+    content_scale = (float)factor;
+    has_host_scale = true;
+
+    if (editor == NULL) {
+        /* No editor to ask for a size, but the interface contract still expects
+         * getSize() to reflect the new scale. */
+        int logical_width = 0;
+        int logical_height = 0;
+
+        EditorRoot::preferred_size(logical_width, logical_height);
+
+        report_size(
+            juce::roundToInt((double)logical_width * (double)factor),
+            juce::roundToInt((double)logical_height * (double)factor)
+        );
+
+        return kResultTrue;
+    }
+
+    EditorRoot* const root = (EditorRoot*)editor;
+
+    if (!root->set_host_scale((double)factor)) {
+        return kResultTrue;
+    }
+
+    /* Re-report our size at the new scale (in physical pixels) so the host
+     * resizes the window to match; it answers with onSize(). */
+    report_size(
+        root->to_physical(root->getWidth()), root->to_physical(root->getHeight())
+    );
+
+    return kResultTrue;
+#endif
+}
+
+
+void Vst3Plugin::GUI::report_size(int const phys_width, int const phys_height)
+{
+    gui_size.right = gui_size.left + (int32)phys_width;
+    gui_size.bottom = gui_size.top + (int32)phys_height;
+    setRect(gui_size);
 
     if (plugFrame != NULL) {
         plugFrame->resizeView(this, &gui_size);

@@ -396,6 +396,32 @@ int ModulationManager::assign(
 }
 
 
+void ModulationManager::pin_detached_source(Synth::ControllerId const source)
+{
+    Modulation::Type type = Modulation::MACRO;
+    int index = 0;
+
+    if (!Modulation::decode(source, type, index) || type != Modulation::MACRO) {
+        return;
+    }
+
+    Synth::ParamId const in = Modulation::macro_in(index);
+
+    /* A macro with no input of its own is unmodulated, and its output is
+     * MIN + f(IN) * (MAX - MIN) -- so whatever IN happens to be left at scales the
+     * range, and the dialled MIN is not what comes out. Pin IN to 0 so it is.
+     *
+     * Checked here, as the macro is routed to a destination, rather than when its
+     * source was set to "-": doing it there wrote IN once and lost it, because a
+     * detached macro's IN is exactly what its knob edits -- any later turn of the
+     * knob, or a patch load, puts a non-zero value straight back. Here the pin is
+     * re-applied every time the macro is put to work, which is when it matters. */
+    if (bridge.controller(in) == Synth::ControllerId::NONE) {
+        bridge.set_ratio(in, 0.0);
+    }
+}
+
+
 int ModulationManager::assign_source(
         Synth::ParamId const dest,
         Synth::ControllerId const source,
@@ -411,6 +437,7 @@ int ModulationManager::assign_source(
      * unique range at this destination. Clear randomness in case this pool slot
      * was previously used as a "Random" source. */
     bridge.assign_controller(Modulation::macro_in(slot), source);
+    pin_detached_source(source);
     bridge.set_ratio(Modulation::macro_rnd(slot), 0.0);
     bridge.set_ratio(Modulation::macro_min(slot), base_ratio);
     bridge.set_ratio(Modulation::macro_max(slot), juce::jlimit(0.0, 1.0, base_ratio + 0.5));

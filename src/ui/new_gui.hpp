@@ -85,6 +85,7 @@ class NewGui : public juce::Component, private juce::Timer
             juce::Rectangle<int> panel,
             Selector* mode,
             Selector* tuning,
+            Selector* mpe,
             Selector* poly,
             std::vector<Knob*>& knobs
         );
@@ -136,6 +137,7 @@ class NewGui : public juce::Component, private juce::Timer
         WaveformSelector* osc2_wave;
         Selector* mode_selector;
         Selector* tuning_selector;
+        Selector* mpe_selector;
         Selector* poly_selector;
         FilterPanel* osc1_filters;
         FilterPanel* osc2_filters;

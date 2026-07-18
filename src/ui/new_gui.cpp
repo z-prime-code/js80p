@@ -39,6 +39,18 @@ static juce::StringArray const POLY_MODES {
 };
 
 
+/* MPE settings (Synth::ParamId::MPEST), matching the order of the engine's
+ * MPE_* constants: OFF, then the lower zone from 15 down to 1 member channels,
+ * then the upper zone from 15 down to 1. */
+static juce::StringArray const MPE_SETTINGS {
+    "OFF",
+    "Lo 15", "Lo 14", "Lo 13", "Lo 12", "Lo 11", "Lo 10", "Lo 9", "Lo 8",
+    "Lo 7", "Lo 6", "Lo 5", "Lo 4", "Lo 3", "Lo 2", "Lo 1",
+    "Up 15", "Up 14", "Up 13", "Up 12", "Up 11", "Up 10", "Up 9", "Up 8",
+    "Up 7", "Up 6", "Up 5", "Up 4", "Up 3", "Up 2", "Up 1"
+};
+
+
 NewGui::NewGui(Synth& synth)
     : bridge(synth),
     manager(bridge),
@@ -49,6 +61,7 @@ NewGui::NewGui(Synth& synth)
     osc2_wave(nullptr),
     mode_selector(nullptr),
     tuning_selector(nullptr),
+    mpe_selector(nullptr),
     poly_selector(nullptr),
     osc1_filters(nullptr),
     osc2_filters(nullptr),
@@ -139,7 +152,9 @@ NewGui::NewGui(Synth& synth)
      * tuning, applies the choice to both oscillators via the mirror param. */
     tuning_selector = add_selector(Synth::ParamId::MTUN, TUNINGS, "TUNING");
     tuning_selector->set_mirror(Synth::ParamId::CTUN);
-    /* Polyphony / note-handling selector (above TUNING). */
+    /* MPE settings selector (between POLY and TUNING). */
+    mpe_selector = add_selector(Synth::ParamId::MPEST, MPE_SETTINGS, "MPE");
+    /* Polyphony / note-handling selector (above MPE). */
     poly_selector = add_selector(Synth::ParamId::NH, POLY_MODES, "POLY");
     add_knob(mix, Synth::ParamId::MIX, "MIX");
     add_knob(mix, Synth::ParamId::PM,  "PM");
@@ -749,7 +764,9 @@ void NewGui::resized()
     osc2_filters->setBounds(osc2_filter_bounds);
 
     lay_out_osc(osc1_bounds, osc1_wave, osc1, osc1_type);
-    lay_out_mix(mix_bounds, mode_selector, tuning_selector, poly_selector, mix);
+    lay_out_mix(
+        mix_bounds, mode_selector, tuning_selector, mpe_selector, poly_selector, mix
+    );
     lay_out_osc(osc2_bounds, osc2_wave, osc2, osc2_type);
 
     /* Two tiny pie dots right-aligned in each oscillator's title row,
@@ -817,13 +834,15 @@ void NewGui::lay_out_mix(
         juce::Rectangle<int> panel,
         Selector* mode,
         Selector* tuning,
+        Selector* mpe,
         Selector* poly,
         std::vector<Knob*>& knobs_
 ) {
     juce::Rectangle<int> inner = panel.reduced(10);
 
-    /* Selectors stack up from the bottom: MODE, then TUNING, then POLY, so from
-     * the top the column reads MIX / PM / FM / AM / POLY / TUNING / MODE. */
+    /* Selectors stack up from the bottom: MODE, then TUNING, then MPE, then
+     * POLY, so from the top the column reads
+     * MIX / PM / FM / AM / POLY / MPE / TUNING / MODE. */
     if (mode != nullptr) {
         mode->setBounds(inner.removeFromBottom(40));
     }
@@ -831,6 +850,11 @@ void NewGui::lay_out_mix(
     if (tuning != nullptr) {
         inner.removeFromBottom(8);
         tuning->setBounds(inner.removeFromBottom(40));
+    }
+
+    if (mpe != nullptr) {
+        inner.removeFromBottom(8);
+        mpe->setBounds(inner.removeFromBottom(40));
     }
 
     if (poly != nullptr) {

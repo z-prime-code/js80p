@@ -28,6 +28,20 @@
 # ─────────────────────────────────────────────────────────────
 cmake_minimum_required(VERSION 3.22)
 
+# ── macOS minimum-OS floor ───────────────────────────────────
+# Without this, the Mach-O's LC_BUILD_VERSION minos defaults to the SDK on the
+# build machine (macOS 15 on the release runner), and dyld then refuses to load
+# the bundle on any older system -- Bitwig on Monterey reports it as
+# "Could not load executable: The bundle couldn't be loaded". The original
+# Makefile build set this per slice (release.sh: x86_64-apple-macos10.12,
+# arm64-apple-macos11); the CMake port dropped it. 10.13 is JUCE 8's floor (its
+# GUI is linked here, so 10.12 is no longer reachable); the linker clamps the
+# arm64 slice up to 11.0 on its own, matching the original. Set before project()
+# so it reaches every target; ignored on non-Apple platforms. Overridable.
+if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "10.12" CACHE STRING "Minimum macOS version to build for")
+endif()
+
 project(JS80P VERSION 4.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
